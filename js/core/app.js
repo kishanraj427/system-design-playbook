@@ -241,7 +241,7 @@
     if (ctx.useToc) buildToc(ctx);
     else toc.remove();
     document.title =
-      (ctx.title ? ctx.title + " · " : "") + "System Design Academy";
+      (ctx.title ? ctx.title + " · " : "") + "System Design Playbook";
     $$(".prose", content).forEach((p) => {
       try {
         SDA.glossify(p);
@@ -1989,7 +1989,7 @@
         el(
           "span",
           null,
-          "© System Design Academy — a single self-contained HTML file.",
+          "© System Design Playbook — a single self-contained HTML file.",
         ),
         el(
           "span",

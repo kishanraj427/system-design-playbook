@@ -1,6 +1,6 @@
-# System Design Academy — Implementation Plan
+# System Design Playbook — Implementation Plan
 
-This is the plan and checklist for building System Design Academy. Before each part, compare it against this file. After each part, update the status columns from the **measured** audit in §11, not from memory.
+This is the plan and checklist for building System Design Playbook. Before each part, compare it against this file. After each part, update the status columns from the **measured** audit in §11, not from memory.
 
 - Status key: ✅ done and verified · 🟡 partly done · ⬜ planned
 - Last updated: 2026-11-13, after Part 15 of 15. **All 15 parts are complete.**
