@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>System Design Academy</title>
+<meta name="description" content="Learn system design from zero to principal-engineer thinking with animated diagrams, simulations, labs and real-world case studies.">
+<meta name="color-scheme" content="dark light">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2322d3ee'/%3E%3Cstop offset='1' stop-color='%238b5cf6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='%230b1222'/%3E%3Cg fill='none' stroke='url(%23g)' stroke-width='5' stroke-linecap='round'%3E%3Cpath d='M18 22h28M18 32h18M18 42h28'/%3E%3C/g%3E%3Ccircle cx='46' cy='32' r='5' fill='%2322d3ee'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body data-depth="simple">
+<a class="skip" href="#main">Skip to content</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient>
+  </defs>
+</svg>
+
+<header class="topbar" role="banner">
+  <button class="icon-btn menu-btn" id="menuBtn" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <a class="brand" href="#/" aria-label="System Design Academy home">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#lg1)" opacity=".16"/><g fill="none" stroke="url(#lg1)" stroke-width="4.5" stroke-linecap="round"><path d="M16 20h22M16 32h14M16 44h22"/><path d="M38 20l10 12-10 12" opacity=".6"/></g><circle cx="48" cy="32" r="4.5" fill="#22d3ee"/></svg>
+    <span class="bt">System Design Academy<small>zero → principal</small></span>
+  </a>
+  <div class="tb-spacer"></div>
+  <button class="search-btn" id="searchBtn" aria-label="Search (Ctrl+K)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <span>Search topics, terms…</span><kbd id="kbdHint">Ctrl K</kbd>
+  </button>
+  <button class="icon-btn" id="themeBtn" aria-label="Toggle light/dark theme">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path id="themeIcon" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+  </button>
+  <a class="ring" id="progressRing" href="#/roadmap" aria-label="Overall progress">
+    <svg viewBox="0 0 40 40" aria-hidden="true"><circle class="ring-bg" cx="20" cy="20" r="16" fill="none" stroke-width="3.5"/><circle class="ring-fg" cx="20" cy="20" r="16" fill="none" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="100.53" stroke-dashoffset="100.53"/></svg>
+    <b id="ringPct">0%</b>
+  </a>
+</header>
+
+<div class="shell">
+  <nav class="sidebar" id="sidebar" aria-label="Course navigation"></nav>
+  <div class="scrim" id="scrim"></div>
+  <main class="main" id="main" tabindex="-1">
+    <div id="view" aria-live="polite"></div>
+  </main>
+</div>
+
+<div class="palette" id="palette" role="dialog" aria-modal="true" aria-label="Search">
+  <div class="pal-box">
+    <div class="pal-in">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="palInput" type="text" placeholder="Search lessons, playgrounds, glossary, case studies…" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="palRes" aria-autocomplete="list">
+      <kbd>Esc</kbd>
+    </div>
+    <div class="pal-res" id="palRes" role="listbox"></div>
+    <div class="pal-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> navigate</span><span><kbd>Enter</kbd> open</span><span><kbd>Esc</kbd> close</span></div>
+  </div>
+</div>
+<div class="tip" id="tip" role="tooltip"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="js/core/engine.js"></script>
+
+<script src="js/core/app.js"></script>
+
+<script src="js/modules/01-foundations.js"></script>
+
+<script src="js/playgrounds/p1-foundations.js"></script>
+
+<script src="js/modules/02-networking.js"></script>
+
+<script src="js/modules/03-traffic.js"></script>
+
+<script src="js/playgrounds/p2-lb-ratelimit-cdn.js"></script>
+
+<script src="js/modules/04-caching.js"></script>
+
+<script src="js/modules/05-databases.js"></script>
+
+<script src="js/playgrounds/p3a-hashring-cache-replication.js"></script>
+
+<script src="js/playgrounds/p3b-sharding-btree-isolation.js"></script>
+
+<script src="js/modules/06-distributed.js"></script>
+
+<script src="js/playgrounds/p4a-cap-raft.js"></script>
+
+<script src="js/playgrounds/p4b-saga-snowflake-vclock.js"></script>
+
+<script src="js/modules/07-async.js"></script>
+
+<script src="js/modules/08-search.js"></script>
+
+<script src="js/playgrounds/p5a-kafka-bloom.js"></script>
+
+<script src="js/playgrounds/p5b-trie-geo-fanout.js"></script>
+
+<script src="js/modules/09-reliability.js"></script>
+
+<script src="js/modules/10-architecture.js"></script>
+
+<script src="js/playgrounds/p6a-circuit-retry.js"></script>
+
+<script src="js/playgrounds/p6b-autoscale-chaos.js"></script>
+
+<script src="js/modules/11-observability.js"></script>
+
+<script src="js/modules/12-security.js"></script>
+
+<script src="js/modules/13-realtime.js"></script>
+
+<script src="js/modules/14-principles.js"></script>
+
+<script src="js/modules/15-interview.js"></script>
+
+<script src="js/labs/labs.js"></script>
+
+<script src="js/pages/cheatsheets.js"></script>
+
+<script src="js/cases/engine.js"></script>
+
+<script src="js/cases/starter-a.js"></script>
+
+<script src="js/cases/starter-b.js"></script>
+
+<script src="js/cases/flagship-a.js"></script>
+<script src="js/cases/flagship-b.js"></script>
+<script src="js/cases/flagship-c.js"></script>
+<script src="js/cases/standard-a.js"></script>
+<script src="js/cases/standard-b.js"></script>
+<script src="js/pages/practice.js"></script>
+<script src="js/pages/practice-b.js"></script>
+<script src="js/pages/projects.js"></script>
+<script src="js/pages/projects-b.js"></script>
+<script src="js/pages/projects-c.js"></script>
+<script src="js/pages/interview-solutions.js"></script>
+<script src="js/pages/interview-solutions-a.js"></script>
+<script src="js/pages/interview-solutions-b.js"></script>
+<script src="js/pages/interview-solutions-c.js"></script>
+<script src="js/pages/principal.js"></script>
+<script src="js/pages/principal-b.js"></script>
+<!-- @@NEXT-PARTS-GO-HERE@@ -->
+</body>
+</html>
