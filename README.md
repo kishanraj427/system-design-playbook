@@ -25,32 +25,6 @@ A fully self-contained, single-page web application built with **vanilla HTML, C
 
 ---
 
-## 🚀 Quick Start
-
-### Option 1: Just Open It
-```bash
-# Double-click index.html — it works from the filesystem
-open index.html
-```
-
-### Option 2: Local Server (optional)
-```bash
-# Any static server works
-python3 -m http.server 8080
-# Then visit http://localhost:8080
-```
-
-### Option 3: Single-File Bundle
-```bash
-# Bundle all files into a single dist/index.html (4.5 MB)
-python3 tools/bundle.py
-open dist/index.html
-```
-
-> **No npm, no node_modules, no build step.** The only external resource is Google Fonts (Inter + JetBrains Mono), with system font fallbacks for offline use.
-
----
-
 ## 📖 Curriculum
 
 ### Learning Paths
@@ -216,45 +190,6 @@ Systems covered: YouTube, Google Search, Uber, Zomato, WhatsApp, Instagram, Twit
 
 ---
 
-## 🗂️ Project Structure
-
-```
-system-design-playbook/
-├── index.html                    # Shell markup + script/link tags
-├── css/
-│   └── styles.css                # Complete design system (54 KB)
-├── js/
-│   ├── core/
-│   │   ├── engine.js             # SDA registry, Diagram engine, UI kit
-│   │   └── app.js                # Router, pages, home, sidebar, boot
-│   ├── modules/
-│   │   ├── 01-foundations.js      # M1: 14 lessons
-│   │   ├── 02-networking.js       # M2: 9 lessons
-│   │   ├── ...                    # M3–M14
-│   │   └── 15-interview.js        # M15: 6 lessons
-│   ├── playgrounds/               # 10 files, 27+ playgrounds
-│   ├── cases/
-│   │   ├── engine.js              # Case study engine
-│   │   ├── starter-a.js           # 8 starter cases
-│   │   ├── flagship-a/b/c.js      # 10 flagship cases
-│   │   └── standard-a/b.js        # 10 standard cases
-│   ├── labs/
-│   │   └── labs.js                # 8 code labs
-│   └── pages/
-│       ├── practice.js            # 33 challenges
-│       ├── projects.js            # 24 projects
-│       ├── interview-solutions.js # 15 worked solutions
-│       └── principal.js           # Principal thinking
-├── tools/
-│   ├── bundle.py                  # Inline everything → dist/index.html
-│   └── check.js                   # Syntax checker (bun tools/check.js)
-├── dist/
-│   └── index.html                 # Bundled single-file (~4.5 MB)
-└── IMPLEMENTATION_PLAN.md         # Full spec, architecture, audit logs
-```
-
----
-
 ## 🏛️ Architecture
 
 ### Design Principles
@@ -277,22 +212,6 @@ system-design-playbook/
 - `localStorage` for progress persistence (`sda:v1`)
 - `prefers-reduced-motion` support — diagrams become static step-by-step reveals
 - Accessible: semantic HTML, ARIA roles, keyboard navigation, visible focus rings
-
----
-
-## 🧰 Tools
-
-### Syntax Check
-```bash
-bun tools/check.js
-# Validates every JS file and every <script src> path
-```
-
-### Bundle
-```bash
-python3 tools/bundle.py
-# Produces dist/index.html — a single self-contained file
-```
 
 ---
 
