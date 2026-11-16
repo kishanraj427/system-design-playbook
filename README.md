@@ -2,7 +2,7 @@
 
 > **Learn system design from zero to principal-engineer thinking** — with animated diagrams, interactive simulations, hands-on labs, and real-world case studies.
 
-A fully self-contained, single-page web application built with **vanilla HTML, CSS, and JavaScript** — no frameworks, no build step required. Open `index.html` in your browser and start learning.
+A fully self-contained, single-page web application built with **vanilla HTML, CSS, and JavaScript** — no frameworks, no build step required. Open [System Design Playbook](https://kishanraj427.github.io/system-design-playbook) in your browser and start learning.
 
 ---
 
