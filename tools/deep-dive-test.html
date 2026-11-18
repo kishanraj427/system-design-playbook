@@ -1,0 +1,56 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lesson Deep Dive behavior check</title>
+<pre id="result">RUNNING</pre>
+<script>
+(async () => {
+  const result = document.getElementById('result');
+  const appPath = new URLSearchParams(location.search).get('app') || '/index.html';
+  const frame = document.createElement('iframe');
+  frame.style.width = '360px';
+  frame.style.height = '800px';
+  document.body.append(frame);
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const check = (condition, message) => { if (!condition) throw new Error(message); };
+  async function navigate(hash) {
+    frame.src = appPath + '?check=' + encodeURIComponent(hash) + hash;
+    await new Promise((resolve, reject) => {
+      frame.onload = resolve;
+      frame.onerror = () => reject(new Error('Lesson iframe failed to load'));
+    });
+    for (let i = 0; i < 100; i++) {
+      if (frame.contentDocument.querySelector('#how .prose')) return frame.contentDocument;
+      await wait(25);
+    }
+    throw new Error('Lesson did not render');
+  }
+  try {
+    let doc = await navigate('#/l/what-is-system-design');
+    check(doc.documentElement.scrollWidth <= frame.contentWindow.innerWidth + 1, 'Lesson page overflows a 360px viewport');
+    let button = doc.querySelector('#how button[aria-controls]');
+    check(button && button.textContent.includes('Go deeper'), 'Missing inline Go deeper button after How; controls: ' + [...doc.querySelectorAll('button[aria-controls]')].map(b => b.getAttribute('aria-controls') + '@' + (b.closest('section')?.id || 'none')).join(', ') + '; how: ' + (doc.querySelector('#how')?.textContent.slice(-100) || 'absent'));
+    const region = doc.getElementById(button.getAttribute('aria-controls'));
+    check(region && region.hidden && button.getAttribute('aria-expanded') === 'false', 'Deep content must start collapsed');
+    const problem = doc.querySelector('#problem');
+    button.click();
+    check(!region.hidden && button.getAttribute('aria-expanded') === 'true', 'Click must reveal deep content and update ARIA');
+    check(region.textContent.trim().length > 40, 'Deep content must be present in the revealed region');
+    check(doc.querySelector('#problem') === problem, 'Opening depth must not rerender simple sections');
+    button.click();
+    check(region.hidden && button.getAttribute('aria-expanded') === 'false', 'Second click must collapse deep content');
+    check(!doc.querySelector('.lesson-head .depth-seg'), 'Old top toggle still appears');
+    const tocLink = doc.querySelector('a[href="#/l/what-is-system-design/deep"]');
+    check(tocLink, 'Deep Dive must remain reachable from the table of contents');
+    tocLink.click();
+    check(!region.hidden && button.getAttribute('aria-expanded') === 'true', 'Table of contents must open the disclosure');
+    doc = await navigate('#/l/what-is-system-design/deep');
+    button = doc.querySelector('#how button[aria-controls]');
+    check(button && button.getAttribute('aria-expanded') === 'true', 'Deep link must open the inline disclosure');
+    await wait(50);
+    check(frame.contentWindow.scrollY > 0, 'Deep link must scroll to the revealed explanation');
+    result.textContent = 'PASS';
+  } catch (error) {
+    result.textContent = 'FAIL: ' + error.message;
+  }
+})();
+</script>

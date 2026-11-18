@@ -257,6 +257,9 @@ input[type=range]:active::-webkit-slider-thumb{transform:scale(1.2)}
 .callout.warn{border-left-color:var(--warn);background:var(--warn-bg)}
 .callout.bad{border-left-color:var(--bad);background:var(--bad-bg)}
 .callout.deep{border-left-color:var(--accent2);background:rgba(139,92,246,.08)}
+.depth-disclosure{display:inline-flex;margin:18px 0 2px}
+.depth-content[hidden]{display:none}
+.depth-content h3:first-child{margin-top:0}
 .callout p:last-child{margin-bottom:0}
 
 /* tables */
