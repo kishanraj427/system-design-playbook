@@ -288,12 +288,15 @@
         "a",
         {
           href: ctx.base + "/" + hd.id,
-          class: hd.dataset.deep ? "deep-only" : null,
         },
         hd.dataset.toc,
       );
       a.addEventListener("click", (e) => {
         e.preventDefault();
+        if (hd.dataset.deep) {
+          const control = ctx.content.querySelector(`[aria-controls="${hd.id}"]`);
+          if (control?.getAttribute("aria-expanded") === "false") control.click();
+        }
         hd.classList.add("in");
         hd.scrollIntoView({
           behavior: SDA.reduced ? "auto" : "smooth",
@@ -355,38 +358,6 @@
         )
         .join('<span aria-hidden="true">/</span>'),
     });
-  }
-  function depthSeg() {
-    const seg = el("div", {
-      class: "seg depth-seg",
-      role: "group",
-      "aria-label": "Explanation depth",
-    });
-    [
-      ["simple", "🌱 Simple"],
-      ["deep", "⚙ Deep-dive"],
-    ].forEach(([v, t]) => {
-      const b = el(
-        "button",
-        {
-          type: "button",
-          "data-v": v,
-          "aria-pressed": String(document.body.dataset.depth === v),
-        },
-        t,
-      );
-      b.addEventListener("click", () => setDepth(v));
-      seg.append(b);
-    });
-    return seg;
-  }
-  function setDepth(v) {
-    document.body.dataset.depth = v;
-    Store.data.depth = v;
-    Store.save();
-    $$(".depth-seg [data-v]").forEach((b) =>
-      b.setAttribute("aria-pressed", String(b.dataset.v === v)),
-    );
   }
   function doneCheck(id) {
     const inp = el("input", {
@@ -536,7 +507,7 @@
       if (x.html) b.insertAdjacentHTML("beforeend", x.html);
     });
   }
-  function renderHow(b, how, hasDeep) {
+  function renderHow(b, how) {
     if (how.intro) b.insertAdjacentHTML("beforeend", `<p>${how.intro}</p>`);
     if (how.steps)
       b.insertAdjacentHTML(
@@ -553,16 +524,6 @@
       how.mount(host, api(host));
     }
     if (how.html) b.insertAdjacentHTML("beforeend", how.html);
-    if (how.deep)
-      b.insertAdjacentHTML(
-        "beforeend",
-        `<div class="callout deep deep-only"><b class="ct">⚙ Deep dive</b>${how.deep}</div>`,
-      );
-    if (hasDeep)
-      b.insertAdjacentHTML(
-        "beforeend",
-        `<div class="callout simple-only"><b class="ct">Want the engineer-level version?</b>Switch the toggle at the top to <b>⚙ Deep-dive</b> for internals, numbers and edge cases.</div>`,
-      );
   }
 
   /* ---------------- LESSON ---------------- */
@@ -599,16 +560,15 @@
         ),
       ),
     );
-    c.append(el("div", { class: "lesson-head" }, depthSeg(), doneCheck(l.id)));
+    c.append(el("div", { class: "lesson-head" }, doneCheck(l.id)));
     let n = 0;
     const hasDeep = !!(l.deep || (l.how && l.how.deep));
-    const sec_ = (key, title, build, deep) => {
+    const sec_ = (key, title, build) => {
       const s = el("section", {
-        class: "sec reveal" + (deep ? " deep-only" : ""),
+        class: "sec reveal",
         id: key,
         "data-toc": title,
       });
-      if (deep) s.dataset.deep = "1";
       s.append(
         el(
           "div",
@@ -616,10 +576,9 @@
           el(
             "span",
             { class: "sec-n", "aria-hidden": "true" },
-            deep ? "⚙" : String(++n),
+            String(++n),
           ),
           el("h2", null, title),
-          deep ? el("span", { class: "deep-tag" }, "Deep dive") : null,
         ),
       );
       const body = el("div", { class: "prose" });
@@ -640,8 +599,35 @@
         "Intuition",
         (b) => (b.innerHTML = `<blockquote>💡 ${l.intuition}</blockquote>`),
       );
-    if (l.how) sec_("how", "How it works", (b) => renderHow(b, l.how, hasDeep));
-    if (l.deep) sec_("deep", "Deep dive", (b) => (b.innerHTML = l.deep), true);
+    if (l.how) sec_("how", "How it works", (b) => renderHow(b, l.how));
+    if (hasDeep) {
+      const host = c.querySelector("#how .prose") ||
+        c.querySelector("#intuition .prose") ||
+        c.querySelector("#problem .prose") || c;
+      const button = el("button", {
+        type: "button",
+        class: "btn primary depth-disclosure",
+        "aria-expanded": "false",
+        "aria-controls": "deep",
+      }, "Go deeper");
+      const region = el("section", {
+        id: "deep",
+        class: "callout deep depth-content",
+        hidden: true,
+        "data-toc": "Deep dive",
+        "data-deep": "1",
+      }, el("h3", null, "Deep dive"));
+      if (l.how?.deep) region.insertAdjacentHTML("beforeend", l.how.deep);
+      if (l.deep) region.insertAdjacentHTML("beforeend", l.deep);
+      button.addEventListener("click", () => {
+        const open = button.getAttribute("aria-expanded") !== "true";
+        button.setAttribute("aria-expanded", String(open));
+        button.textContent = open ? "Hide deeper explanation" : "Go deeper";
+        region.hidden = !open;
+      });
+      host.append(button, region);
+      if (sec === "deep") button.click();
+    }
     if (l.tradeoffs)
       sec_("tradeoffs", "Trade-offs", (b) =>
         b.append(tradeoffsEl(l.tradeoffs)),
@@ -836,7 +822,6 @@
           { class: "btn primary magnetic", href: "#/l/" + firstOpen.id },
           pr.done ? "Continue →" : "Start module →",
         ),
-        depthSeg(),
       ),
     );
     if (m.outcomes)
@@ -2697,8 +2682,7 @@
     document.documentElement.classList.add("js-anim");
     if (SDA.reduced) document.documentElement.classList.add("reduced");
     applyTheme(Store.data.theme || "dark");
-    document.body.dataset.depth =
-      Store.data.depth === "deep" ? "deep" : "simple";
+    document.body.dataset.depth = "simple";
     if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent))
       $("#kbdHint").textContent = "⌘ K";
     $("#themeBtn").addEventListener("click", () =>
