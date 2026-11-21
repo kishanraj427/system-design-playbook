@@ -58,13 +58,13 @@ function indexChecker(host){
     lines.push(orderOk ? ['ok', P.order === 'none' ? 'No ORDER BY.' : `ORDER BY ${P.order} comes free from the index order — no sort step.`] : ['warn', `ORDER BY ${P.order} needs an extra sort (“filesort”) — the index can’t provide that order after this prefix.`]);
     lines.push(covering ? ['ok', 'Covering index: every selected column is in the index — no trips back to the table (“index-only scan”).'] : ['warn', P.sel === 'cover' ? 'Not covering: some selected columns aren’t in the index, so each match needs a table lookup.' : 'SELECT * → one table lookup per matching row (random I/O).']);
     out.innerHTML = '';
-    out.append(h2(h.code('sql', `CREATE INDEX idx ON products (${cols.join(', ')});
+    out.append(h2(h.code('sql', `CREATE INDEX idx ON rooms (${cols.join(', ')});
 
-SELECT ${P.sel === 'cover' ? 'city, category, price' : '*'} FROM products
-WHERE ${[P.city ? "city = 'Pune'" : null, P.cat ? "category = 'shoes'" : null, P.price === 'eq' ? 'price = 1999' : P.price === 'range' ? 'price BETWEEN 1000 AND 3000' : null].filter(Boolean).join(' AND ') || 'TRUE'}${P.order !== 'none' ? `\nORDER BY ${P.order}` : ''}
+SELECT ${P.sel === 'cover' ? 'city, category, price' : '*'} FROM rooms
+WHERE ${[P.city ? "city = 'Pune'" : null, P.cat ? "category = 'family'" : null, P.price === 'eq' ? 'price = 1999' : P.price === 'range' ? 'price BETWEEN 1000 AND 3000' : null].filter(Boolean).join(' AND ') || 'TRUE'}${P.order !== 'none' ? `\nORDER BY ${P.order}` : ''}
 LIMIT 50;`, 'query.sql')));
     lines.forEach(([c, t]) => out.append(el('div', {class:'verdict ' + (c || 'warn'), style:{marginTop:'6px', fontWeight:'500', ...(c ? {} : {background:'var(--surface)', color:'var(--text-2)', border:'1px solid var(--border)'})}, html:t})));
-    out.append(el('p', {class:'lab-hint'}, 'Table: 10M products. Assumed selectivity: city 1%, category 2%, price range 10%, exact price 0.1% (illustrative).'));
+    out.append(el('p', {class:'lab-hint'}, 'Table: 10 million hotel rooms. Category means room type. The percentages are invented for this exercise.'));
   }
   const h2 = s => frag(s);
   host.append(el('div', {class:'ctl-grid'},
@@ -72,7 +72,7 @@ LIMIT 50;`, 'query.sql')));
     ui.select({label:'Price condition', value:'range', options:[['none', 'none'], ['eq', 'price = 1999'], ['range', 'price BETWEEN …']], onChange:v => { P.price = v; analyze(); }}).el,
     ui.select({label:'ORDER BY', value:'price', options:[['none', 'none'], ['price', 'price'], ['created_at', 'created_at (not indexed)']], onChange:v => { P.order = v; analyze(); }}).el,
     ui.select({label:'SELECT', value:'cover', options:[['cover', 'city, category, price'], ['star', '*']], onChange:v => { P.sel = v; analyze(); }}).el),
-    el('div', {class:'row', style:{gap:'18px', marginTop:'10px'}}, ui.toggle({label:"WHERE city = 'Pune'", checked:true, onChange:v => { P.city = v; analyze(); }}).el, ui.toggle({label:"AND category = 'shoes'", checked:true, onChange:v => { P.cat = v; analyze(); }}).el), out);
+    el('div', {class:'row', style:{gap:'18px', marginTop:'10px'}}, ui.toggle({label:"WHERE city = 'Pune'", checked:true, onChange:v => { P.city = v; analyze(); }}).el, ui.toggle({label:"AND category = 'family room'", checked:true, onChange:v => { P.cat = v; analyze(); }}).el), out);
   analyze();
 }
 function lockSim(host){
@@ -122,13 +122,13 @@ function rowColDemo(host){
     const row = N * P.cols * B, col = N * 2 * B / P.comp * (P.months / 12);
     const t = b => b / 1e9;
     out.innerHTML = '';
-    [['Row store (OLTP layout)', row, 'var(--c-db)', 'Reads every column of every row (no useful index for an aggregate over months).'], ['Column store (OLAP layout)', col, 'var(--accent2)', `Reads only <code>amount</code> and <code>order_date</code>, compressed ${P.comp}×, and skips blocks outside the ${P.months}-month range using min/max metadata.`]].forEach(([n, b, c, why]) => {
+    [['Row store (OLTP layout)', row, 'var(--c-db)', 'Reads every column of every booking row in this simplified model.'], ['Column store (OLAP layout)', col, 'var(--accent2)', `Reads only booking amount and date, compressed ${P.comp} times. It skips months outside the selected range.`]].forEach(([n, b, c, why]) => {
       out.append(el('div', {class:'wf-row', style:{gridTemplateColumns:'190px 1fr 150px'}}, el('b', {class:'wl'}, n), el('div', {class:'wf-track', style:{height:'22px'}}, el('div', {class:'wf-bar', style:{left:'0', width:Math.max(.5, b / row * 100) + '%', background:c}})), el('span', {class:'wt'}, `${fmtBytes(b)} · ${fmtDur(t(b) * 1000)}`)), el('p', {class:'lab-hint', style:{margin:'0 0 10px 200px'}, html:why}));
     });
     out.append(el('div', {class:'verdict ok'}, `Column store reads ~${fmtNum(row / col)}× less data for this query.`));
-    out.append(el('p', {class:'lab-hint'}, 'Query: SELECT SUM(amount) FROM orders WHERE order_date in the last N months. 8 bytes per value, scanning at 1 GB/s, illustrative.'));
+    out.append(el('p', {class:'lab-hint'}, 'Hotel report: sum booking amounts over the selected months. The byte sizes and scan speed are teaching estimates.'));
   }
-  host.append(el('div', {class:'ctl-grid'}, ui.slider({label:'Rows in the orders table', min:5, max:10, step:.1, value:8, fmt:v => fmtNum(Math.pow(10, v)), onInput:v => { P.rows = v; calc(); }}).el, ui.slider({label:'Columns in the table', min:5, max:200, step:1, value:50, fmt:v => v, onInput:v => { P.cols = v; calc(); }}).el, ui.slider({label:'Column compression', min:1, max:15, step:.5, value:5, fmt:v => v + '×', onInput:v => { P.comp = v; calc(); }}).el, ui.slider({label:'Months queried (of 12)', min:1, max:12, step:1, value:1, fmt:v => v, onInput:v => { P.months = v; calc(); }}).el), out);
+  host.append(el('div', {class:'ctl-grid'}, ui.slider({label:'Rows in the bookings table', min:5, max:10, step:.1, value:8, fmt:v => fmtNum(Math.pow(10, v)), onInput:v => { P.rows = v; calc(); }}).el, ui.slider({label:'Columns in the table', min:5, max:200, step:1, value:50, fmt:v => v, onInput:v => { P.cols = v; calc(); }}).el, ui.slider({label:'Column compression', min:1, max:15, step:.5, value:5, fmt:v => v + '×', onInput:v => { P.comp = v; calc(); }}).el, ui.slider({label:'Months queried (of 12)', min:1, max:12, step:1, value:1, fmt:v => v, onInput:v => { P.months = v; calc(); }}).el), out);
   calc();
 }
 function tierCalc(host){
@@ -143,7 +143,7 @@ function tierCalc(host){
     out.append(el('div', {class:'verdict ok'}, `Everything in the hot tier: $${fmtNum(flat)}/month. With lifecycle tiering: $${fmtNum(tiered)}/month — ${Math.round((1 - tiered / flat) * 100)}% less.`));
     out.append(el('p', {class:'lab-hint'}, 'Prices are illustrative, roughly in line with published list prices for major cloud object-storage classes in one US region; they vary by region and change over time. Colder tiers add retrieval fees, minimum storage durations and restore delays.'));
   }
-  host.append(el('div', {class:'ctl-grid'}, ui.slider({label:'Total data', min:1, max:5000, step:1, value:500, fmt:v => v + ' TB', onInput:v => { P.tb = v; calc(); }}).el, ui.slider({label:'Accessed in the last 30 days', min:1, max:100, step:1, value:10, fmt:v => v + '%', onInput:v => { P.hot = v; P.warm = Math.min(P.warm, 100 - v); calc(); }}).el, ui.slider({label:'Accessed in 30–90 days', min:0, max:99, step:1, value:20, fmt:v => v + '%', onInput:v => { P.warm = Math.min(v, 100 - P.hot); calc(); }}).el), out);
+  host.append(el('div', {class:'ctl-grid'}, ui.slider({label:'Total hotel photo data', min:1, max:5000, step:1, value:500, fmt:v => v + ' TB', onInput:v => { P.tb = v; calc(); }}).el, ui.slider({label:'Accessed in the last 30 days', min:1, max:100, step:1, value:10, fmt:v => v + '%', onInput:v => { P.hot = v; P.warm = Math.min(P.warm, 100 - v); calc(); }}).el, ui.slider({label:'Accessed in 30–90 days', min:0, max:99, step:1, value:20, fmt:v => v + '%', onInput:v => { P.warm = Math.min(v, 100 - P.hot); calc(); }}).el), out);
   calc();
 }
 
@@ -151,507 +151,601 @@ function tierCalc(host){
 const lessons = [
 {
   id:'sql-vs-nosql', title:'SQL vs NoSQL: the database families and how to choose', minutes:11, tags:['SQL','NoSQL','key-value','document','wide-column','graph','time-series','vector'],
-  summary:'Relational, key-value, document, wide-column, graph, time-series, search and vector stores each optimise for a different access pattern. Choose by how you read and write, not by fashion.',
-  problem:`<p>A food-delivery startup stores orders, restaurant menus, rider GPS pings every 4 seconds, user search queries and “restaurants similar to this one”. One team wants MongoDB for everything, another Postgres for everything, a third wants seven databases. The right answer depends on <strong>access patterns</strong>, not on which database is trending.</p>`,
-  intuition:`Storage furniture. A filing cabinet with cross-referenced folders (relational). A wall of numbered lockers (key-value). A box per customer holding all their papers (document). A ledger where each page is one rider’s location log in time order (wide-column / time-series). A corkboard with strings between photos (graph). A library card catalogue by word (search). A map where similar things sit close together (vector).`,
+  summary:'SQL databases keep related records in tables and support questions across them. NoSQL is a group of other data shapes. Choose from the reads and writes the app needs.',
+  problem:`<h3>A small example</h3><p>A hotel booking app stores rooms and reservations.</p><ul><li>A guest searches for a room.</li><li>A booking connects one guest, hotel, room, and date.</li><li>The app also stores hotel photos and recent searches.</li></ul><p>Which facts belong together, and which questions must the database answer?</p>`,
+  intuition:`A table is like a reservation book with separate pages for guests, rooms, and bookings. A key-value store is a row of lockers opened by a number. A document keeps one hotel's details together.`,
   how:{
-    steps:[`<b>Relational (SQL):</b> tables, joins, constraints, ACID transactions, ad-hoc queries. Default choice for core business data.`, `<b>Key-value:</b> get/put by key, extreme scale and predictable latency; queries limited to the key.`, `<b>Document:</b> JSON-like objects read and written whole; flexible schema; weak at cross-document joins.`, `<b>Wide-column:</b> partition key → sorted rows; built for massive writes and known query patterns (design a table per query).`, `<b>Graph:</b> nodes and edges; fast multi-hop traversals.`, `<b>Time-series:</b> timestamped points, retention policies, downsampling, range aggregations.`, `<b>Search:</b> inverted indexes for full-text relevance (usually a secondary copy).`, `<b>Vector:</b> approximate nearest-neighbour search over embeddings.`, `Ask: What are the queries? Read:write ratio? Consistency needs? Scale? Then pick — and remember many systems use several stores, each fed from one source of truth.`],
-    diagram:{title:'Polyglot persistence in a delivery app', w:800, h:300, alt:'Services write to Postgres as the source of truth; change streams feed Elasticsearch, a vector index and an analytics store; GPS pings go to a wide-column store.',
-      nodes:[{id:'api', type:'service', label:'Order & menu svc', x:110, y:90, w:150}, {id:'gps', type:'service', label:'Rider location svc', x:110, y:230, w:150}, {id:'pg', type:'db', label:'PostgreSQL', sub:'orders, menus', x:360, y:90, w:130}, {id:'cas', type:'db', label:'Cassandra', sub:'GPS pings', x:360, y:230, w:130}, {id:'q', type:'queue', label:'Change stream', x:560, y:90, w:130}, {id:'es', type:'db', label:'Elasticsearch', sub:'search', x:720, y:40, w:130}, {id:'vec', type:'db', label:'Vector index', sub:'similar', x:720, y:140, w:130}, {id:'wh', type:'db', label:'Warehouse', sub:'analytics', x:720, y:240, w:130}],
+    intro:'<h3>What happens behind the scenes</h3><p>Start with the booking question before choosing a database family.</p>',
+    steps:[
+      {icon:'🏨', title:'List related facts', text:'A booking joins a guest, room, hotel, and dates. SQL tables are a clear fit for those relationships.'},
+      {icon:'🔑', title:'Look up by one key', text:'A key-value store returns one item quickly when the app already knows its ID.'},
+      {icon:'📄', title:'Read one whole document', text:'A document store can keep one hotel’s description and amenities together.'},
+      {icon:'🕒', title:'Store repeated history', text:'A wide-column or time-based store may suit many price changes written in order.'},
+      {icon:'⚖️', title:'Choose by actual work', text:'Keep bookings in one reliable source first. Add another store only when a measured need calls for it.'}
+    ],
+    diagram:{title:'Different reads in a hotel app', w:800, h:300, alt:'Bookings use a relational source. Other stores can hold price history and derived views for searching, similar hotels, and reports.',
+      nodes:[{id:'api', type:'service', label:'Booking app', x:110, y:90, w:150}, {id:'gps', type:'service', label:'Price history', x:110, y:230, w:150}, {id:'pg', type:'db', label:'SQL database', sub:'rooms, bookings', x:360, y:90, w:130}, {id:'cas', type:'db', label:'History store', sub:'price changes', x:360, y:230, w:130}, {id:'q', type:'queue', label:'Change path', x:560, y:90, w:130}, {id:'es', type:'db', label:'Search copy', sub:'hotel names', x:720, y:40, w:130}, {id:'vec', type:'db', label:'Related hotels', sub:'similar', x:720, y:140, w:130}, {id:'wh', type:'db', label:'Reports store', sub:'analysis', x:720, y:240, w:130}],
       edges:[{from:'api', to:'pg'}, {from:'gps', to:'cas'}, {from:'pg', to:'q'}, {from:'q', to:'es'}, {from:'q', to:'vec'}, {from:'q', to:'wh'}],
       steps:[
-        {note:'Orders and menus need transactions and joins → <b>PostgreSQL</b> is the source of truth.', flow:[['api', 'pg', 'INSERT order']], hl:['pg']},
-        {note:'Rider GPS pings are a firehose of time-ordered writes per rider → a <b>wide-column</b> store partitioned by rider.', flow:[['gps', 'cas', 'ping'], ['gps', 'cas', 'ping'], ['gps', 'cas', 'ping']], hl:['cas']},
-        {note:'Changes stream out of Postgres (CDC, Module 7)…', flow:[['pg', 'q', 'change']], hl:['q']},
-        {note:'…into <b>search</b> (dish names), a <b>vector</b> index (“similar restaurants”) and the <b>warehouse</b> (analytics). Each is derived and rebuildable.', flow:[['q', 'es'], ['q', 'vec'], ['q', 'wh']], parallel:true}
+        {note:'The booking app saves rooms and reservations in SQL tables.', flow:[['api', 'pg', 'save booking']], hl:['pg']},
+        {note:'The app may store repeated price changes in a separate history layout.', flow:[['gps', 'cas', 'price'], ['gps', 'cas', 'price'], ['gps', 'cas', 'price']], hl:['cas']},
+        {note:'A later change can feed read-only copies. You will learn that path in Module 7.', flow:[['pg', 'q', 'change']], hl:['q']},
+        {note:'Search, related-hotel views, and reports can be rebuilt from original records. You will learn search in Module 8.', flow:[['q', 'es'], ['q', 'vec'], ['q', 'wh']], parallel:true}
       ]},
-    deep:`<p><b>Data-model fit:</b> document stores shine when data is a self-contained tree (an order with its line items) and suffer when you need many-to-many joins; relational shines at many-to-many and ad-hoc queries. Wide-column stores (Bigtable, Cassandra) require query-first modelling — duplicate data into one table per query. Graph databases avoid repeated joins for variable-depth traversals.</p><p><b>Operations matter as much as features:</b> backups, failover, migrations, observability, hiring. Postgres extensions (JSONB, full-text search, PostGIS, pgvector, TimescaleDB) often delay the need for a second system. When you do add stores, designate <b>one system of record</b> and treat the rest as derived views fed by change data capture.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Storage shape', 'Hotel fact'], [['Related pages in a reservation book', 'Guests, rooms, and bookings in SQL tables.'], ['Locker opened by a number', 'Hotel details found by hotel ID.'], ['Folder for one hotel', 'One document with its amenities.']])}</div><div class="callout tip"><b>Important point</b><p>Start with the questions the hotel app must answer. Store names alone do not choose a database.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Need', 'Possible fit'], [['Correct room bookings across related records', 'Relational SQL database.'], ['Read one whole hotel description by ID', 'Document or key-value store.'], ['Huge ordered price history', 'Time-based or wide-column store.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say the hotel app has 5 million bookings of about 200 bytes each. 5,000,000 × 200 B = 1,000,000,000 B, which is 1 GB. That fits on one ordinary server, even with indexes. Size alone is rarely a reason to leave SQL.</p><p>Now say the app adds 3 more stores. Each one needs its own backup, its own alerts and its own way to get data in. That is 3 extra sets of chores to run every week.</p><h4>When it goes wrong</h4><p>Many SQL databases can keep a JSON document inside one column. PostgreSQL does this with its jsonb type. The hotel description and amenities can sit next to the booking tables. The app gets document-style reads without a second database.</p><h4>How it works inside</h4><p>A key-value store finds an item by running the key through a hash, a repeatable number made from the key. It does not need to scan. But it cannot answer "all rooms under ₹2,000" unless you built another lookup for it.</p>`
   },
-  tradeoffs:{use:[`<b>Relational</b> for core transactional data (the default)`, `<b>Specialised stores</b> when an access pattern or scale clearly outgrows it`, `<b>Polyglot</b> with one system of record and derived copies`], avoid:[`Picking NoSQL to “avoid schemas” — the schema just moves into code`, `A new database per feature (operational sprawl)`, `Using a search engine as the system of record`], alt:[`Postgres extensions (JSONB, pgvector, TimescaleDB, PostGIS)`, `NewSQL / distributed SQL (Spanner, CockroachDB, YugabyteDB, TiDB) for SQL at horizontal scale`]},
+  tradeoffs:{use:[`For hotel bookings, SQL keeps guest, room, and date relationships clear.`, `Use another store only for a hotel read or write pattern the first store cannot serve well.`], avoid:[`Do not add a new database for each hotel screen before measuring a need.`, `Do not keep conflicting original booking records in several stores.`], alt:[`A relational product may also store hotel documents or time-based records at the app’s first scale.`]},
   real:[
-    {co:'Discord', tier:'confirmed', text:'Moved message storage from MongoDB to Cassandra (2017) and later to ScyllaDB (2023), because messages are a massive, time-ordered, per-channel write workload.', src:'Discord Engineering, “How Discord Stores Billions of Messages” (2017) and “How Discord Stores Trillions of Messages” (2023)'},
-    {co:'Uber', tier:'confirmed', text:'Built Schemaless, a scalable datastore layered on top of MySQL, and later wrote about moving core workloads from PostgreSQL to MySQL.', src:'Uber Engineering, “Designing Schemaless” (2016); “Why Uber Engineering Switched from Postgres to MySQL” (2016)'},
-    {co:'Amazon', tier:'confirmed', text:'The 2007 Dynamo paper describes a highly available key-value store for the shopping cart; DynamoDB (2012) is the managed service inspired by it.', src:'DeCandia et al., SOSP 2007; AWS DynamoDB documentation'},
-    {co:'Google', tier:'confirmed', text:'Bigtable (OSDI 2006) is the wide-column store behind many Google products and the model for HBase and Cassandra’s data layout.', src:'Chang et al., “Bigtable”, OSDI 2006'}
+    {co:'Google', tier:'confirmed', text:'The Bigtable paper describes a store built for very large, ordered data keyed by row.', src:'Chang and others, Bigtable (2006)'}
   ],
-  mistakes:[`Choosing by popularity instead of access pattern`, `Document DB for highly relational data (joins in application code)`, `No single source of truth across several stores`],
-  interview:[`Justify the database from the queries you listed in the API step`, `Name the partition key and main query for any NoSQL table you draw`],
-  tryit:{note:'Describe your workload; get ranked recommendations with reasons.', mount:host => dbChooser(host)},
-  sources:[`Martin Kleppmann, “Designing Data-Intensive Applications”, ch. 2–3`, `Chang et al., Bigtable (OSDI 2006)`, `DeCandia et al., Dynamo (SOSP 2007)`, `Discord Engineering blog`]
+  mistakes:[`Choosing a database only because its name is popular.`, `Giving two stores separate copies of a booking without naming which one is original.`],
+  interview:[`Name the hotel app’s main reads and writes before choosing a database.`, `Explain why a room booking needs related records.`],
+  tryit:[{quiz:[
+    {q:'Which data fits related SQL tables in the hotel app?', options:['A color palette', 'Guests, rooms, and bookings', 'Only a photo file', 'Only one random key'], answer:1, why:'The booking connects several related facts.'},
+    {q:'What should guide a database choice?', options:['The number of logos', 'One example from another company', 'The app’s actual reads and writes', 'The newest product name'], answer:2, why:'Different database families serve different access patterns.'}
+  ]}, {note:'Select hotel booking relationships first. Then try one-key hotel lookups and ordered price history.', mount:host => dbChooser(host)}],
+  sources:[`Chang and others, Bigtable (2006)`, `Martin Kleppmann, Designing Data-Intensive Applications`]
 },
 {
   id:'acid-vs-base', title:'ACID vs BASE', minutes:8, tags:['ACID','BASE','atomicity','durability','eventual consistency'],
-  summary:'ACID: transactions are all-or-nothing, valid, isolated and durable. BASE: basically available, soft state, eventually consistent — trading guarantees for availability and scale.',
-  problem:`<p>Transferring ₹500 from Asha to Ravi is two writes: debit Asha, credit Ravi. If the server crashes between them, ₹500 vanishes. Meanwhile a “likes” counter on a viral reel is updated 50,000 times a second across regions — making every increment a strictly consistent transaction would be slow and fragile. Different data deserves different guarantees.</p>`,
-  intuition:`ACID is a bank locker transaction: both signatures or nothing, the bank’s rules always hold, nobody sees the half-done state, and once the receipt is printed it survives a fire. BASE is a WhatsApp group’s “seen by” list: everyone eventually sees the same thing, but for a moment different phones show different counts — and that’s fine.`,
+  summary:'ACID groups important database changes so they succeed together and survive a crash. BASE allows some copies to disagree briefly before they settle. Different hotel facts need different promises.',
+  problem:`<h3>A small example</h3><p>A guest pays ₹500 toward a hotel booking.</p><ul><li>₹500 leaves the guest wallet.</li><li>₹500 reaches the hotel wallet.</li><li>The hotel page also counts views.</li></ul><p>Which changes must be exact now, and which count can catch up later?</p>`,
+  intuition:`A transfer receipt must show both sides of a payment or neither. A hotel view counter can be a little behind while phones catch up.`,
   how:{
-    steps:[`<b>Atomicity:</b> all writes in a transaction commit, or none do (rollback on failure).`, `<b>Consistency:</b> the transaction moves the database from one valid state to another (constraints, invariants hold).`, `<b>Isolation:</b> concurrent transactions don’t see each other’s partial work (to a degree set by the isolation level).`, `<b>Durability:</b> once committed, data survives crashes (write-ahead log, fsync, replication).`, `<b>BASE:</b> Basically Available, Soft state, Eventually consistent — replicas may disagree briefly but converge.`, `Real systems mix both: ACID for money and inventory, BASE for counters, feeds and analytics.`],
-    diagram:{title:'Atomicity via the write-ahead log', w:740, h:240, alt:'A transfer writes to the write-ahead log before applying both changes; a crash before commit rolls back.',
-      nodes:[{id:'app', type:'service', label:'Payments svc', x:90, y:120}, {id:'wal', type:'queue', label:'Write-ahead log', x:340, y:50, w:150}, {id:'a', type:'db', label:'Asha: ₹1,000', x:600, y:60, w:150}, {id:'r', type:'db', label:'Ravi: ₹200', x:600, y:180, w:150}],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow the ₹500 transfer first, then compare the hotel view count.</p>',
+    steps:[
+      {icon:'🔁', title:'Atomicity keeps both sides', text:'The guest debit and hotel credit both complete, or neither does.'},
+      {icon:'✅', title:'Consistency keeps rules true', text:'The transfer must not create or lose ₹500 between the two wallets.'},
+      {icon:'🚪', title:'Isolation hides half-work', text:'Another request should not see a half-finished transfer.'},
+      {icon:'💾', title:'Durability keeps a commit', text:'After the database confirms the transfer, a crash should not erase it.'},
+      {icon:'👀', title:'BASE can suit a count', text:'Hotel view counts may be briefly different across copies, then move toward the same value.'}
+    ],
+    diagram:{title:'A hotel payment keeps both sides together', w:740, h:240, alt:'A guest payment records both wallet changes before committing. A crash before commit leaves neither change.',
+      nodes:[{id:'app', type:'service', label:'Booking payment', x:90, y:120}, {id:'wal', type:'queue', label:'Change log', x:340, y:50, w:150}, {id:'a', type:'db', label:'Guest: ₹1,000', x:600, y:60, w:150}, {id:'r', type:'db', label:'Hotel: ₹200', x:600, y:180, w:150}],
       edges:[{from:'app', to:'wal'}, {from:'wal', to:'a'}, {from:'wal', to:'r'}, {from:'app', to:'a', dashed:true}],
       steps:[
-        {note:'<code>BEGIN</code>; debit Asha ₹500 and credit Ravi ₹500 are both recorded in the <b>WAL</b> first.', flow:[['app', 'wal', 'debit -500'], ['app', 'wal', 'credit +500']], hl:['wal']},
-        {note:'<code>COMMIT</code>: the commit record is flushed (fsync) — now the transfer is <b>durable</b>.', flow:[['app', 'wal', 'COMMIT + fsync']], hl:['wal']},
-        {note:'Changes are applied to the data pages: Asha ₹500, Ravi ₹700. Total money unchanged (<b>consistency</b>).', flow:[['wal', 'a'], ['wal', 'r']], parallel:true, sub:{a:'→ ₹500', r:'→ ₹700'}},
-        {note:'If the crash had happened <i>before</i> COMMIT, recovery would replay the log and discard the uncommitted transaction: <b>atomicity</b> — no half-transfer.', status:{app:'down'}, hl:['wal']}
+        {note:'Record the guest debit and hotel credit as one planned transfer.', flow:[['app', 'wal', 'guest -500'], ['app', 'wal', 'hotel +500']], hl:['wal']},
+        {note:'Commit confirms both changes together.', flow:[['app', 'wal', 'commit']], hl:['wal']},
+        {note:'Guest has ₹500 and hotel has ₹700. Total money stays the same.', flow:[['wal', 'a'], ['wal', 'r']], parallel:true, sub:{a:'₹500', r:'₹700'}},
+        {note:'If the app crashes before commit, neither wallet change should remain.', status:{app:'down'}, hl:['wal']}
       ]},
-    deep:`<p><b>“Consistency” is overloaded:</b> the C in ACID (application invariants) is not the C in CAP (linearizability across replicas, Module 6). Atomicity and durability come from logging (WAL/redo logs, ARIES-style recovery); isolation from locks and MVCC.</p><p><b>BASE in practice</b> means designing for convergence: idempotent operations, commutative updates (CRDT counters), read-repair and anti-entropy. The term was popularised by Dan Pritchett (eBay) in ACM Queue (2008) as an alternative to distributed ACID transactions, which are slow and fragile across services (2PC, Module 6). Many modern distributed databases (Spanner, CockroachDB) offer ACID across nodes using consensus — at a latency cost.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Hotel record', 'Promise'], [['Guest pays and hotel receives', 'Both changes complete together.'], ['Another guest checks while payment runs', 'No half-transfer appears.'], ['Guest views hotel page', 'The count may update later.']])}</div><div class="callout tip"><b>Important point</b><p>Choose the guarantee for the fact. Money and room allocation need stronger rules than a view count.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Data', 'Useful approach'], [['Booking payment', 'ACID transaction.'], ['Last available room', 'ACID transaction.'], ['Approximate hotel view count', 'An eventually updated value can be enough.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say the guest wallet holds ₹2,000 and the hotel wallet holds ₹10,000. The total is ₹12,000. After the ₹500 transfer they hold ₹1,500 and ₹10,500. The total is still ₹12,000. That unchanged total is the rule consistency protects.</p><p>Now the view count. Say two copies each count 1,000 new views before they sync. If they add their counts, the total is 2,000. If one copy simply overwrites the other, 1,000 views are lost. BASE still needs a merge rule.</p><h4>How it works inside</h4><p>For the transfer, the write-ahead log gets three records: debit ₹500, credit ₹500, then commit. After a crash, the database replays work that has a commit record. It ignores work that does not.</p><h4>When it goes wrong</h4><p>Some settings confirm a commit before the log reaches the disk. That is faster, but a crash can then lose work the guest was told was saved.</p>`
   },
-  tradeoffs:{use:[`<b>ACID:</b> money, orders, inventory, bookings, anything with invariants`, `<b>BASE:</b> counters, likes, feeds, presence, analytics, caches`], avoid:[`BASE for balances or seat allocation`, `Distributed ACID transactions across many services as a default (latency, availability)`], alt:[`Sagas with compensation (Module 6)`, `Single-partition transactions in NoSQL stores (e.g. DynamoDB transactions)`, `Distributed SQL databases`]},
+  tradeoffs:{use:[`For the hotel payment, use a transaction so both wallet changes commit together.`, `A briefly delayed hotel view count can use a looser update rule.`], avoid:[`Do not allow two guests to receive the last room.`, `Do not treat a temporarily wrong money balance as acceptable.`], alt:[`If the app only needs one local database, keep the transfer in that database instead of spreading it across services.`]},
   real:[
-    {co:'eBay', tier:'confirmed', text:'Dan Pritchett described the BASE approach — partitioning functionality and accepting eventual consistency instead of distributed transactions — from eBay’s experience.', src:'Dan Pritchett, “BASE: An Acid Alternative”, ACM Queue (2008)'},
-    {co:'Google Spanner', tier:'confirmed', text:'Provides externally consistent (strictly serialisable) ACID transactions across data centres using TrueTime and Paxos.', src:'Corbett et al., “Spanner”, OSDI 2012'},
-    {co:'Amazon DynamoDB', tier:'confirmed', text:'Defaults to eventually consistent reads (strongly consistent reads are optional) and offers ACID transactions across up to a bounded number of items.', src:'Amazon DynamoDB documentation'}
+    {co:'eBay', tier:'confirmed', text:'Dan Pritchett described BASE as a way to reason about looser consistency in large systems.', src:'Dan Pritchett, BASE: An Acid Alternative (2008)'}
   ],
-  mistakes:[`Confusing ACID consistency with CAP consistency`, `Assuming NoSQL means no transactions at all`, `Turning off fsync for speed on a database holding money`],
-  interview:[`Say which data needs ACID and which can be eventually consistent`, `Mention the WAL when explaining durability and crash recovery`],
-  tryit:{note:'ACID or BASE?', mount:host => sortGame(host, [
-    {t:'Wallet balance transfer between two users', c:'a', why:'Money must never be created or destroyed — atomic and isolated.'},
-    {t:'View count on a viral video', c:'b', why:'Approximate and eventually consistent is fine; scale matters more.'},
-    {t:'Allocating the last seat on a train', c:'a', why:'Double allocation is unacceptable.'},
-    {t:'“Online now” presence dots', c:'b', why:'Briefly wrong is harmless.'},
-    {t:'Order placement with inventory decrement', c:'a', why:'Order and stock must change together.'},
-    {t:'Recommendation scores recomputed nightly', c:'b', why:'Derived, rebuildable, staleness tolerated.'}
-  ], [{id:'a', label:'ACID'}, {id:'b', label:'BASE'}])},
-  sources:[`Jim Gray & Andreas Reuter, “Transaction Processing” (1992)`, `Dan Pritchett, ACM Queue 2008`, `Corbett et al., Spanner, OSDI 2012`]
+  mistakes:[`Saving only the guest debit before saying the payment succeeded.`, `Treating the last available room like an approximate view count.`],
+  interview:[`Explain what each ACID letter protects in the hotel payment.`, `Say why the hotel view count can be delayed.`],
+  tryit:[{quiz:[
+    {q:'What should happen if the app crashes before a hotel payment commits?', options:['Only the guest debit remains', 'Only the hotel credit remains', 'Both wallets double', 'Neither wallet change remains'], answer:3, why:'Atomicity keeps the transfer together.'},
+    {q:'Which hotel fact may safely be briefly behind?', options:['Approximate page view count', 'Guest money balance', 'Last room allocation', 'Confirmed payment'], answer:0, why:'A view count can be updated later if the product allows it.'}
+  ]}, {note:'Sort hotel facts by whether they need a transaction or may update later.', mount:host => sortGame(host, [
+    {t:'Move ₹500 from guest to hotel wallet', c:'a', why:'Both money changes must complete together.'},
+    {t:'Count hotel page views', c:'b', why:'A short delay may be acceptable.'},
+    {t:'Give the last room to one guest', c:'a', why:'Two confirmations would be wrong.'},
+    {t:'Update an approximate trending score', c:'b', why:'The display can catch up later.'}
+  ], [{id:'a', label:'ACID'}, {id:'b', label:'BASE'}])}],
+  sources:[`Dan Pritchett, BASE: An Acid Alternative (2008)`]
 },
 {
   id:'indexes', title:'Indexes: B-tree, hash, composite, covering, inverted', minutes:11, tags:['index','B-tree','hash index','composite index','covering index','inverted index'],
-  summary:'An index trades write cost and storage for fast reads. Know the leftmost-prefix rule, when indexes cover a query, and which structure suits which query.',
-  problem:`<p><code>SELECT * FROM orders WHERE user_id = 42 ORDER BY created_at DESC LIMIT 20</code> takes 4 seconds on 200 million rows because the database reads every row. An index makes it a few milliseconds. But add ten indexes “just in case” and every insert gets slower and the table doubles in size.</p>`,
-  intuition:`The index at the back of a textbook: instead of reading every page to find “photosynthesis”, you look it up alphabetically and jump to pages 42 and 97. A phone book sorted by (last name, first name) helps you find “Sharma, Priya” — but is useless for finding everyone named Priya.`,
+  summary:'An index helps a database find matching rows without reading every row. Its order matters for searches and sorting. Each extra index also uses space and slows writes.',
+  problem:`<h3>A small example</h3><p>The hotel app has millions of room records. A guest searches rooms in Pune by type and price.</p><ul><li>City is Pune.</li><li>Room type is family.</li><li>Price must be between ₹1,000 and ₹3,000.</li></ul><p>How can the database find matching rooms without checking every room?</p>`,
+  intuition:`A book index lists topics in sorted order, so you jump to the right pages. A phone book sorted by city, then name helps with a city search. It cannot start from name alone.`,
   how:{
-    steps:[`<b>B-tree</b> (the default almost everywhere): sorted, balanced tree; supports equality, ranges, ORDER BY and prefix matches in O(log n).`, `<b>Hash index</b>: equality only, O(1); no ranges or ordering.`, `<b>Composite index</b> (a, b, c): sorted by a, then b, then c. Usable for a; a+b; a+b+c — the <b>leftmost-prefix rule</b>. A range on a column stops further columns from narrowing the seek.`, `<b>Covering index</b>: contains every column the query needs, so the table itself is never read (index-only scan).`, `<b>Inverted index</b>: word → list of documents containing it; powers full-text search (Module 8).`, `Every index slows writes and uses storage. Index for your <b>actual</b> queries; verify with <code>EXPLAIN</code>.`],
-    diagram:{title:'A B-tree lookup touches only a few pages', w:760, h:260, alt:'A query traverses root, internal and leaf pages of a B-tree to find user 42.',
-      nodes:[{id:'q', type:'client', label:'WHERE user_id=42', x:90, y:130, w:150}, {id:'root', type:'db', label:'Root page', sub:'< 500 | ≥ 500', x:320, y:130, w:130}, {id:'i1', type:'db', label:'Internal', sub:'< 50 | ≥ 50', x:500, y:70, w:120}, {id:'i2', type:'db', label:'Internal', sub:'500…', x:500, y:200, w:120}, {id:'leaf', type:'db', label:'Leaf: 40–49', sub:'42 → row ptrs', x:680, y:70, w:130}],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow a sorted index to hotel 42, then consider a multi-column room search.</p>',
+    steps:[
+      {icon:'📚', title:'Keep keys in order', text:'A B-tree index keeps values sorted, so the database can jump toward hotel 42 or scan a price range.'},
+      {icon:'🔢', title:'Use a hash for one key', text:'A hash index helps with exact matches, such as hotel ID 42, but not sorted price ranges.'},
+      {icon:'🧩', title:'Order several columns', text:'An index on city, room type, and price starts with city. Skipping city loses its useful starting point.'},
+      {icon:'📄', title:'Cover a narrow answer', text:'If the index contains every field a query needs, the database may avoid reading the full room row.'},
+      {icon:'🔎', title:'Match words to records', text:'An inverted index maps a word to records containing it. You will learn search structures in Module 8.'}
+    ],
+    diagram:{title:'Find hotel 42 through a B-tree', w:760, h:260, alt:'A sorted index guides a hotel-ID lookup through a few pages rather than scanning all rows.',
+      nodes:[{id:'q', type:'client', label:'hotel_id=42', x:90, y:130, w:150}, {id:'root', type:'db', label:'Root page', sub:'< 500 | ≥ 500', x:320, y:130, w:130}, {id:'i1', type:'db', label:'Internal', sub:'< 50 | ≥ 50', x:500, y:70, w:120}, {id:'i2', type:'db', label:'Internal', sub:'500…', x:500, y:200, w:120}, {id:'leaf', type:'db', label:'Leaf: 40–49', sub:'42 row', x:680, y:70, w:130}],
       edges:[{from:'q', to:'root'}, {from:'root', to:'i1'}, {from:'root', to:'i2'}, {from:'i1', to:'leaf'}],
       steps:[
-        {note:'Start at the root page: 42 &lt; 500 → go left.', flow:[['q', 'root', 'seek 42']], hl:['root']},
-        {note:'Internal page: 42 &lt; 50 → follow that pointer.', flow:[['root', 'i1']], hl:['i1']},
-        {note:'Leaf page lists keys 40–49 and pointers to the matching rows. Three page reads instead of millions.', flow:[['i1', 'leaf']], hl:['leaf']},
-        {note:'With fan-out ~100s per page, even a billion rows needs only ~4–5 levels — and the top levels are always cached in RAM.', hl:['root', 'i1', 'leaf']}
+        {note:'Hotel ID 42 is below 500, so the search follows the left branch.', flow:[['q', 'root', 'find 42']], hl:['root']},
+        {note:'ID 42 is also below 50 at the next page.', flow:[['root', 'i1']], hl:['i1']},
+        {note:'The leaf points to hotel 42 without checking every hotel row.', flow:[['i1', 'leaf']], hl:['leaf']},
+        {note:'Upper index pages can stay in memory because many lookups reuse them.', hl:['root', 'i1', 'leaf']}
       ]},
-    html:h.code('sql', `-- Composite index serving filter + sort + limit without a sort step:
-CREATE INDEX orders_user_created ON orders (user_id, created_at DESC);
-
-EXPLAIN ANALYZE
-SELECT id, total_paise, created_at FROM orders
-WHERE user_id = 42 ORDER BY created_at DESC LIMIT 20;
--- Index Scan using orders_user_created ... rows=20  (no Sort node)
-
--- Covering (PostgreSQL INCLUDE): index-only scan, the table heap is not read
-CREATE INDEX orders_user_created_cov ON orders (user_id, created_at DESC) INCLUDE (total_paise);`, 'indexes.sql'),
-    deep:`<p><b>Clustered vs secondary:</b> InnoDB stores rows inside the primary-key B-tree (clustered), so secondary indexes point to the primary key — random UUIDv4 primary keys scatter inserts across pages (page splits, poor locality); time-ordered keys (ULID, UUIDv7, Snowflake IDs) insert at the right edge. PostgreSQL stores rows in a heap and indexes point to row locations.</p><p><b>Selectivity and the planner:</b> an index on a low-cardinality column (status with 3 values) rarely helps; the planner chooses a sequential scan when it expects to read a large fraction of the table. Partial indexes (<code>WHERE status = 'pending'</code>) index only what you query. Expression indexes support <code>lower(email)</code>.</p><p><b>Other structures:</b> GIN (inverted; JSONB, arrays, full text), GiST/SP-GiST (geometric, ranges), BRIN (tiny block-range summaries for naturally ordered huge tables), and LSM trees (next lesson).</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Book index', 'Hotel query'], [['Jump to one entry', 'Find hotel ID 42.'], ['Read a run of nearby entries', 'Find rooms in a price range.'], ['Use the first sort column', 'Start with city in a city, type, price index.']])}</div><div class="callout tip"><b>Important point</b><p>Build an index for a query the hotel app actually makes. Every extra index costs space and write work.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Query', 'Useful index'], [['One hotel ID', 'Hash or B-tree.'], ['City, type, then price range', 'Composite B-tree in that order.'], ['Words in a review', 'Inverted index, taught in Module 8.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say the hotel app has 5,000,000 room rows. A B-tree page holds about 200 keys. One level reaches 200 pages, two levels reach 200 × 200 = 40,000, and three levels reach 200 × 200 × 200 = 8,000,000. So 3 page reads find one room, not 5 million row checks.</p><p>Writes cost more. Say a table has 4 indexes. One new room means 1 table write plus 4 index writes, which is 5.</p><h4>When it goes wrong</h4><p>An index on room type is weak. Say there are 4 types, so family rooms are 25% of 5,000,000 = 1,250,000 rows. Jumping to a million rows one by one can be slower than one straight scan.</p><p>Column order matters too. The index (city, room type, price) works well. The index (city, price, room type) must scan the whole Pune price range, then filter by type.</p>`
   },
-  tradeoffs:{use:[`Columns in frequent WHERE, JOIN and ORDER BY clauses`, `Composite indexes ordered: equality columns first, then range/sort column`, `Covering indexes for hot, narrow queries`], avoid:[`Indexing every column`, `Low-selectivity columns alone`, `Many indexes on write-heavy tables`], alt:[`Partial or expression indexes`, `Materialised views / summary tables`, `A search engine for full-text`]},
+  tradeoffs:{use:[`For the hotel search, index city, room type, and price if those are common filters.`, `For hotel ID lookup, use the existing primary-key index.`], avoid:[`Do not add an index for every room column without a matching query.`, `Do not place price first when most searches begin with city.`], alt:[`If review text search becomes important, add a suitable text index later in Module 8.`]},
   real:[
-    {co:'MySQL InnoDB', tier:'confirmed', text:'Organises table data as a clustered B+tree on the primary key; secondary indexes store the primary key as their row pointer.', src:'MySQL Reference Manual — clustered and secondary indexes'},
-    {co:'PostgreSQL', tier:'confirmed', text:'Provides B-tree (default), hash, GiST, SP-GiST, GIN and BRIN index types, plus partial, expression and covering (INCLUDE) indexes.', src:'PostgreSQL documentation — index types'},
-    {co:'Elasticsearch / Lucene', tier:'confirmed', text:'Built on inverted indexes that map terms to the documents containing them.', src:'Apache Lucene documentation'}
+    {co:'PostgreSQL', tier:'confirmed', text:'PostgreSQL documents B-tree, hash, and other index types for different queries.', src:'PostgreSQL index documentation'}
   ],
-  mistakes:[`Wrong column order in composite indexes`, `Functions on indexed columns in WHERE (<code>WHERE date(created_at) = …</code>) defeating the index`, `Never running EXPLAIN`, `Random UUID primary keys on InnoDB at high insert rates`],
-  interview:[`For each hot query, name the index (and its column order)`, `Mention write amplification and storage cost of indexes`],
-  tryit:{note:'Pick an index and a query. See whether the index is used, how many rows are examined, and if a sort or table lookups are needed.', mount:host => indexChecker(host)},
-  sources:[`Bayer & McCreight, “Organization and Maintenance of Large Ordered Indexes” (1972)`, `PostgreSQL and MySQL documentation`, `Markus Winand, “Use The Index, Luke!”`]
+  mistakes:[`Choosing the wrong column order for the hotel search.`, `Adding many indexes without checking the cost of room updates.`],
+  interview:[`Name an index for city, room type, and price.`, `Explain why an index helps reads but adds write and storage work.`],
+  tryit:[{quiz:[
+    {q:'Which index order fits searches by city, room type, and price range?', options:['No index can help', 'City, type, price', 'Price, type, city always', 'Only room photo'], answer:1, why:'The index starts with the equal city and type filters before the price range.'},
+    {q:'What cost does an extra index add?', options:['A new hotel', 'A different browser', 'Storage and work on writes', 'No cost at all'], answer:2, why:'The database must update the index when relevant rows change.'}
+  ]}, {note:'Use the index explorer with city, room type, and price filters. Compare column orders and selected fields.', mount:host => indexChecker(host)}],
+  sources:[`PostgreSQL index documentation`]
 },
 {
   id:'btree-vs-lsm', title:'Storage engines: B-trees vs LSM-trees', minutes:10, tags:['B-tree','LSM','SSTable','memtable','compaction','write amplification'],
-  summary:'B-trees update pages in place — great for reads. LSM-trees append and merge later — great for writes. Each pays in a different amplification.',
-  problem:`<p>A rider-tracking system writes 200,000 GPS points per second. A B-tree-based database updates random pages on disk for every insert and falls behind. A log-structured store absorbs the writes easily — but its reads may check several files, and background compaction eats disk bandwidth. Which engine for which workload?</p>`,
-  intuition:`A B-tree is a perfectly organised filing cabinet: every new paper is filed in its exact place immediately (slow to file, fast to find). An LSM-tree is an inbox tray: new papers go on top instantly; once a day you sort the tray into the cabinet and merge duplicates (fast to file, finding something may mean checking the tray and a few piles).`,
+  summary:'A B-tree keeps sorted pages ready for reads. An LSM-tree collects writes quickly and sorts files later. The hotel app should choose from its measured read and write pattern.',
+  problem:`<h3>A small example</h3><p>The hotel app reads current room prices and records every price change.</p><ul><li>Guests search current prices often.</li><li>Hotels may send many price changes.</li><li>History can grow large.</li></ul><p>Should the store organize each write immediately or merge writes later?</p>`,
+  intuition:`A B-tree is a sorted filing cabinet. A clerk files each price in its place now. An LSM-tree is a sorted inbox that accepts changes quickly and merges them into larger files later.`,
   how:{
-    steps:[`<b>B-tree:</b> fixed-size pages; an insert finds the right leaf and updates it in place (with a WAL for crash safety); full pages split.`, `<b>LSM-tree:</b> writes go to an in-memory <b>memtable</b> (plus a WAL). When full it is flushed as an immutable sorted file — an <b>SSTable</b>.`, `Reads check the memtable, then SSTables newest → oldest. <b>Bloom filters</b> skip files that can’t contain the key.`, `Background <b>compaction</b> merges SSTables, discarding overwritten and deleted (tombstoned) entries.`, `Trade-offs: <b>write amplification</b> (bytes written to disk per byte of data), <b>read amplification</b> (files/pages read per lookup), <b>space amplification</b> (stale data awaiting compaction).`],
-    diagram:{title:'The LSM write path', w:760, h:260, alt:'Writes go to a WAL and a memtable; full memtables flush to SSTables at level 0, which compact into level 1.',
-      nodes:[{id:'w', type:'client', label:'Writes', x:80, y:130}, {id:'wal', type:'queue', label:'WAL (append)', x:270, y:50, w:130}, {id:'mt', type:'cache', label:'Memtable', sub:'sorted, in RAM', x:270, y:190, w:130}, {id:'l0', type:'db', label:'L0 SSTables', x:490, y:190, w:130}, {id:'l1', type:'db', label:'L1 (compacted)', x:680, y:190, w:130}],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow one hotel price change through an LSM store, then compare a B-tree.</p>',
+    steps:[
+      {icon:'📇', title:'B-tree files now', text:'A B-tree finds the right sorted page and updates it. This helps later lookups and price ranges.'},
+      {icon:'✍️', title:'LSM accepts a write', text:'An LSM store records the change in a recovery log and a sorted memory area called a memtable.'},
+      {icon:'💾', title:'Memory becomes a file', text:'When the memtable fills, it becomes a sorted disk file called an SSTable.'},
+      {icon:'🧹', title:'Files merge later', text:'Compaction combines sorted files and removes older versions of changed prices.'},
+      {icon:'🔎', title:'Reads may check more places', text:'An LSM read can check memory and several files. Measure that cost against its faster write path.'}
+    ],
+    diagram:{title:'Saving hotel price changes with an LSM store', w:760, h:260, alt:'A price change reaches a recovery log and memtable, then sorted files that merge later.',
+      nodes:[{id:'w', type:'client', label:'Price change', x:80, y:130}, {id:'wal', type:'queue', label:'Recovery log', x:270, y:50, w:130}, {id:'mt', type:'cache', label:'Memtable', sub:'sorted memory', x:270, y:190, w:130}, {id:'l0', type:'db', label:'New sorted files', x:490, y:190, w:130}, {id:'l1', type:'db', label:'Merged files', x:680, y:190, w:130}],
       edges:[{from:'w', to:'wal'}, {from:'w', to:'mt'}, {from:'mt', to:'l0'}, {from:'l0', to:'l1'}],
       steps:[
-        {note:'Each write is appended to the <b>WAL</b> (sequential, durable) and inserted into the in-memory <b>memtable</b>. Acknowledged — no random disk I/O.', flow:[['w', 'wal', 'append'], ['w', 'mt', 'put k=v']], parallel:true, hl:['mt']},
-        {note:'When the memtable fills, it is written out as a new immutable, sorted <b>SSTable</b> in one sequential write.', flow:[['mt', 'l0', 'flush']], hl:['l0']},
-        {note:'Background <b>compaction</b> merges overlapping SSTables into the next level, dropping overwritten values and tombstones.', flow:[['l0', 'l1', 'merge']], hl:['l1']},
-        {note:'A read checks memtable → L0 → L1, using each file’s Bloom filter to skip files that don’t have the key.', flow:[['w', 'mt', 'get k'], ['mt', 'l0', 'bloom?'], ['l0', 'l1', 'bloom ✓']], hl:['l1']}
+        {note:'A hotel price change reaches the recovery log and memtable.', flow:[['w', 'wal', 'record'], ['w', 'mt', 'save']], parallel:true, hl:['mt']},
+        {note:'The memtable fills and is written as a sorted file.', flow:[['mt', 'l0', 'write file']], hl:['l0']},
+        {note:'Background work merges files and removes older price versions.', flow:[['l0', 'l1', 'merge']], hl:['l1']},
+        {note:'A read may check memory, then newer and older sorted files.', flow:[['w', 'mt', 'read'], ['mt', 'l0', 'check'], ['l0', 'l1', 'check']], hl:['l1']}
       ]},
-    deep:`<p><b>Compaction strategies:</b> <i>leveled</i> (RocksDB default, LevelDB): each level is one sorted run ~10× bigger than the previous — low read and space amplification, higher write amplification. <i>Size-tiered</i> (Cassandra’s classic default): merge similar-sized runs — lower write amplification, more space and read amplification. Compaction competes with foreground I/O; throttle it, or tail latency suffers.</p><p><b>B-tree costs:</b> random writes, page splits and fragmentation; each small update rewrites a whole page (plus the WAL) — write amplification too. SSDs narrow the random-vs-sequential gap but erase-block wear still favours sequential writes. The RUM conjecture frames the trade-off: you can optimise two of Read, Update and Memory overheads, not all three.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Price filing', 'Storage engine'], [['File each change in its sorted place', 'B-tree.'], ['Accept changes in an inbox and merge later', 'LSM-tree.']])}</div><div class="callout tip"><b>Important point</b><p>Faster writes often move sorting work to later. Read speed and background work still matter.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Hotel workload', 'Possible fit'], [['Many current-room lookups and ranges', 'B-tree.'], ['Very heavy ordered price-history writes', 'LSM-tree after measurement.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say one price change is 100 bytes and a B-tree page is 8 KB, about 8,000 bytes. Changing one price rewrites a whole page. 8,000 ÷ 100 = 80 times more disk writing than the change itself.</p><p>Say an LSM memtable holds 64 MB. 64,000,000 B ÷ 100 B = 640,000 changes in one new file. That is one big sequential write, which disks handle well.</p><p>Say a price is rewritten once at each of 5 merge stages. Then 1 change causes 5 disk writes. That is the cost of cleaning up later.</p><h4>How it works inside</h4><p>An LSM cannot erase a price from an old file. A delete is written as a small marker called a tombstone. Space is freed only when compaction merges the file holding the marker with the files holding the old value.</p>`
   },
-  tradeoffs:{use:[`<b>B-tree:</b> read-heavy OLTP, range scans, predictable reads (PostgreSQL, MySQL/InnoDB)`, `<b>LSM:</b> write-heavy ingestion, time-series, KV at scale (RocksDB, Cassandra, ScyllaDB, Bigtable)`], avoid:[`LSM for heavy random point reads without Bloom filters and caching`, `B-trees for firehose ingestion on slow disks`], alt:[`Hash-indexed logs (Bitcask) for small keyspaces in RAM`, `Columnar formats for analytics`]},
+  tradeoffs:{use:[`For hotel room searches, a B-tree can support current price lookups and ranges.`, `For a measured flood of price-history writes, compare an LSM engine.`], avoid:[`Do not choose an LSM solely because writes sound fast.`, `Do not ignore compaction work when the hotel app is busy.`], alt:[`Keep current bookings in one SQL database and place huge price history elsewhere only after a measured need.`]},
   real:[
-    {co:'Google Bigtable / LevelDB', tier:'confirmed', text:'Bigtable introduced the memtable + SSTable design at scale; LevelDB, released by Google engineers, popularised leveled compaction.', src:'Chang et al., Bigtable, OSDI 2006; LevelDB documentation'},
-    {co:'Meta RocksDB', tier:'confirmed', text:'A LevelDB fork optimised for fast storage; MyRocks uses it as a MySQL storage engine to cut storage and write amplification versus InnoDB for some Meta workloads.', src:'rocksdb.org; Matsunobu et al., “MyRocks”, VLDB 2020'},
-    {co:'Apache Cassandra', tier:'confirmed', text:'Uses an LSM storage engine (commit log, memtables, SSTables) with configurable compaction strategies.', src:'Apache Cassandra documentation'}
+    {co:'Apache Cassandra', tier:'confirmed', text:'Cassandra documents a write path with a commit log, memtable, sorted files, and compaction.', src:'Apache Cassandra documentation'}
   ],
-  mistakes:[`Ignoring compaction debt until disks fill`, `No Bloom filters on LSM reads`, `Assuming LSM is always faster (reads and space can be worse)`],
-  interview:[`Match engine to workload: write-heavy → LSM, read/range-heavy OLTP → B-tree`, `Name the three amplifications`],
-  tryit:{note:'Insert keys into a real B-tree and a real LSM side by side. Watch splits, flushes, compaction and the read path.', pg:'btree-lsm'},
-  sources:[`O’Neil et al., “The Log-Structured Merge-Tree” (1996)`, `Chang et al., Bigtable (2006)`, `Athanassoulis et al., “The RUM Conjecture” (EDBT 2016)`]
+  mistakes:[`Choosing an LSM without checking the cost of reading price history.`, `Ignoring background file merges until they slow hotel searches.`],
+  interview:[`Trace one hotel price change through the LSM write path.`, `Explain why a B-tree can help current-room range reads.`],
+  tryit:[{quiz:[
+    {q:'Where does an LSM store first hold a new hotel price in sorted memory?', options:['A poster file', 'A browser tab', 'A CDN edge', 'Memtable'], answer:3, why:'The memtable accepts recent writes before they become sorted disk files.'},
+    {q:'What later work combines LSM sorted files?', options:['Compaction', 'DNS lookup', 'Ticket draining', 'HTML parsing'], answer:0, why:'Compaction merges files and removes old versions.'}
+  ]}, {note:'Insert hotel price changes into the B-tree and LSM explorer. Compare the read path and file merges.', pg:'btree-lsm'}],
+  sources:[`Apache Cassandra documentation`, `O’Neil and others, The Log-Structured Merge-Tree (1996)`]
 },
 {
   id:'normalization', title:'Normalization vs denormalization', minutes:8, tags:['normalization','denormalization','3NF','joins','duplication'],
-  summary:'Normalize to keep one source of truth per fact. Denormalize deliberately to make hot reads cheap — and own the cost of keeping copies in sync.',
-  problem:`<p>Each order row stores the restaurant’s name and address. A restaurant renames itself, and now 2 million old orders show the old name — or worse, half are updated and half aren’t. On the other hand, the order-history screen joins six tables and takes 800 ms at peak.</p>`,
-  intuition:`Normalization is keeping one master contact card per person and referring to it everywhere (“see card #42”). Denormalization is writing their phone number directly on every invitation — handy to read, painful when they change numbers.`,
+  summary:'Normalization stores one current copy of a fact and links to it. Denormalization makes extra copies for faster reads. Historical booking facts may need a deliberate snapshot.',
+  problem:`<h3>A small example</h3><p>A hotel changes its name after many guests have booked rooms.</p><ul><li>Current hotel name appears on search pages.</li><li>Bookings link to that hotel.</li><li>Old receipts must show what the guest paid.</li></ul><p>Which facts should live once, and which should be kept as a booking-time copy?</p>`,
+  intuition:`Keep one current contact card and refer to it from many notes. Copy a price onto a receipt because the receipt records the past, even after the price changes.`,
   how:{
-    steps:[`<b>Normalization</b> (1NF→3NF, BCNF): each fact stored once; tables linked by keys; avoids update, insert and delete anomalies.`, `<b>Denormalization:</b> duplicate data (or precompute aggregates) so hot reads avoid joins.`, `Keep historical facts <b>as they were</b>: an order should store the price paid (a snapshot), not point at today’s price.`, `If you denormalize, decide who updates the copies: same transaction, triggers, or async events (CDC) — and accept the staleness window.`, `NoSQL stores often force denormalization: model per query, duplicate across tables.`],
+    intro:'<h3>What happens behind the scenes</h3><p>Separate current hotel facts from the guest’s historical booking.</p>',
+    steps:[
+      {icon:'🏨', title:'Store current facts once', text:'Keep the hotel’s current name in its hotel record. Bookings refer to that record by ID.'},
+      {icon:'🔗', title:'Join when reading', text:'The booking page can join the booking with the hotel record to show the current name.'},
+      {icon:'📋', title:'Copy when it helps', text:'A busy search page may keep a prepared copy of hotel facts for fast reading.'},
+      {icon:'🧾', title:'Keep history honestly', text:'The booking receipt stores the price paid then. It must not change when today’s room price changes.'},
+      {icon:'🔄', title:'Plan copy updates', text:'Every extra current-name copy needs a way to change when the hotel renames itself.'}
+    ],
     stepper:{title:'Same data, two shapes', items:[
-      {title:'Normalized', tag:'3 tables', text:'<code>orders(id, user_id, restaurant_id, total)</code>, <code>restaurants(id, name, address)</code>, <code>users(id, name)</code>. Rename a restaurant = 1 row update.'},
-      {title:'Read cost', tag:'joins', text:'Order history needs <code>orders JOIN restaurants JOIN users</code> — fine with indexes, but costly at very high QPS.'},
-      {title:'Denormalized', tag:'1 wide row', text:'<code>orders(id, user_name, restaurant_name, restaurant_address, total, …)</code>. One read, no joins.'},
-      {title:'Update cost', tag:'anomalies', text:'Rename = update every copy. Miss one → inconsistent data.'},
-      {title:'Snapshot fields', tag:'correct duplication', text:'<code>item_price_paise</code> on the order line is <i>supposed</i> to be a copy: it records what was paid then.'},
-      {title:'Hybrid', tag:'common answer', text:'Normalized source of truth + denormalized read models (materialised views, caches, search docs) refreshed by events.'}
+      {title:'Store current hotel', tag:'one record', text:'The hotel table holds one current name and address.'},
+      {title:'Link a booking', tag:'ID', text:'A booking stores hotel ID, guest ID, room ID, dates, and paid price.'},
+      {title:'Read together', tag:'join', text:'A join combines the linked rows when the guest opens a booking.'},
+      {title:'Make a fast copy', tag:'extra read shape', text:'A search screen may keep current hotel name near room facts for faster reads.'},
+      {title:'Rename the hotel', tag:'update', text:'Update the current hotel record and any prepared current-name copies.'},
+      {title:'Keep the receipt', tag:'history', text:'The paid price stays on the booking receipt even if today’s price changes.'}
     ]},
-    deep:`<p><b>Anomalies normalization prevents:</b> <i>update</i> (same fact in many places diverges), <i>insert</i> (can’t record a restaurant without an order), <i>delete</i> (deleting the last order loses the restaurant). 3NF: every non-key attribute depends on the key, the whole key and nothing but the key.</p><p><b>Denormalization patterns:</b> materialised views (refreshed periodically or incrementally), counter columns (<code>comment_count</code>) updated in the same transaction, read models in CQRS (Module 7), embedding in documents. The engineering question is always: what is the staleness and repair story for each copy?</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Office record', 'Hotel data'], [['One current contact card', 'One current hotel record.'], ['Notes refer to that card', 'Bookings refer to hotel ID.'], ['Receipt keeps an old paid amount', 'Booking keeps its price snapshot.']])}</div><div class="callout tip"><b>Important point</b><p>Copy a fact only when the app needs a faster read or an honest record of the past.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Fact', 'Shape'], [['Current hotel name', 'One normalized source.'], ['Search result name', 'A maintained read copy if needed.'], ['Price paid for a booking', 'Historical snapshot.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say one hotel has 50,000 bookings. If every booking copies the hotel name, a rename means 50,000 row updates. With a hotel table, it is 1 row. If the update misses 3 rows, 3 bookings show the old name and 49,997 show the new one.</p><p>Now the receipt. A room costs ₹2,000 a night and a guest stays 3 nights. The paid amount is ₹6,000. If the app joins to today's price of ₹2,500, the old receipt shows 3 × 2,500 = ₹7,500. That is wrong, so the booking stores its own price.</p><h4>When it goes wrong</h4><p>Say a prepared search copy refreshes every 5 minutes. A rename can then show up to 5 × 60 = 300 seconds late. Decide whether that delay is acceptable before you build the copy.</p>`
   },
-  tradeoffs:{use:[`<b>Normalize</b> the system of record (OLTP)`, `<b>Denormalize</b> read models, analytics tables, caches, search documents`, `Snapshot fields for historical truth (prices paid, addresses delivered to)`], avoid:[`Denormalizing before measuring a real read bottleneck`, `Copies with no defined update path`], alt:[`Better indexes or covering indexes`, `Materialised views`, `Caching`]},
+  tradeoffs:{use:[`For the hotel app, keep the current name once and link bookings by ID.`, `Keep the paid price on each booking receipt as a snapshot.`], avoid:[`Do not copy the current hotel name to every booking without an update plan.`, `Do not replace a paid price with today’s price.`], alt:[`Try a suitable index before adding a prepared copy to speed up the booking page.`]},
   real:[
-    {co:'E. F. Codd', tier:'confirmed', text:'The relational model and normalization originate in Codd’s 1970 paper and follow-up work defining normal forms.', src:'Codd, “A Relational Model of Data for Large Shared Data Banks”, CACM 1970'},
-    {co:'Amazon DynamoDB guidance', tier:'confirmed', text:'AWS recommends modelling around access patterns, often with denormalized items and single-table designs, rather than normalized relational schemas.', src:'Amazon DynamoDB developer guide — best practices for NoSQL design'}
+    {co:'E. F. Codd', tier:'confirmed', text:'Codd’s relational model led to ways of organizing facts so repeated copies do not drift apart.', src:'Codd, A Relational Model of Data (1970)'}
   ],
-  mistakes:[`Storing current price on order lines by reference (history changes!)`, `Denormalized copies updated by ad-hoc scripts`, `Premature denormalization`],
-  interview:[`Normalize the core; justify each denormalized copy with a read pattern and an update path`],
-  tryit:{note:'Normalize (store once, reference) or keep a copy?', mount:host => sortGame(host, [
-    {t:'Restaurant name shown on order history', c:'n', why:'Reference the restaurant (or snapshot only if you must show the name at order time).'},
-    {t:'Price paid for each item on an order', c:'d', why:'A historical snapshot — copying is correct.'},
-    {t:'Delivery address used for an order', c:'d', why:'The user may change their address later; the order must keep where it was delivered.'},
-    {t:'User’s email used for login', c:'n', why:'One source of truth; duplicates cause account bugs.'},
-    {t:'Comment count shown on every post card', c:'d', why:'A precomputed counter avoids COUNT(*) on every read; update it transactionally.'},
-    {t:'Product category name', c:'n', why:'Reference data — store once.'}
-  ], [{id:'n', label:'Normalize'}, {id:'d', label:'Copy/denormalize'}])},
-  sources:[`Codd, CACM 1970`, `Kleppmann, DDIA ch. 2`, `DynamoDB best practices`]
+  mistakes:[`Using today’s room price to rewrite an old receipt.`, `Keeping copied current names with no update path.`],
+  interview:[`Explain why hotel name and paid price have different storage rules.`, `Name the update path for any fast read copy.`],
+  tryit:[{quiz:[
+    {q:'Where should the current hotel name live first?', options:['Only in the browser', 'One hotel record', 'Every booking only', 'Only in a photo'], answer:1, why:'One current record avoids conflicting names.'},
+    {q:'Why should a booking keep the price paid?', options:['It removes the hotel', 'It changes the room type', 'It records a historical fact', 'It makes all future prices equal'], answer:2, why:'A receipt must show what the guest agreed to then.'}
+  ]}, {note:'Sort hotel facts by whether they should be linked to one current record or copied as history.', mount:host => sortGame(host, [
+    {t:'Current hotel name', c:'n', why:'Keep one current source.'},
+    {t:'Price paid on a booking receipt', c:'d', why:'The old amount must remain on the receipt.'},
+    {t:'Guest email for login', c:'n', why:'Keep one current account value.'},
+    {t:'Room price shown on a measured hot search page', c:'d', why:'A maintained read copy can help when measured reads need it.'}
+  ], [{id:'n', label:'Normalize'}, {id:'d', label:'Copy/denormalize'}])}],
+  sources:[`Codd, A Relational Model of Data (1970)`]
 },
 {
   id:'transactions-isolation', title:'Transactions and isolation levels (MVCC)', minutes:12, tags:['isolation','dirty read','non-repeatable read','phantom','MVCC','serializable','write skew'],
-  summary:'Isolation levels decide which anomalies concurrent transactions can see. MVCC lets readers and writers not block each other.',
-  problem:`<p>Two doctors are on call. Each checks “is at least one other doctor on call?”, sees yes, and goes off call — at the same time. Now nobody is on call. Every query was correct; the combination was not. This is <strong>write skew</strong>, and whether your database prevents it depends on the isolation level you chose (often without knowing).</p>`,
-  intuition:`Isolation levels are how private your workspace is. Read Uncommitted: you can see a colleague’s scribbles before they finish. Read Committed: you only see finished pages, but they may change between your glances. Repeatable Read / snapshot: you work from a photocopy taken when you started. Serializable: the result is as if everyone worked one at a time.`,
+  summary:'A transaction groups related database work. Isolation decides what overlapping transactions can see. MVCC keeps older row versions so readers can use a stable view.',
+  problem:`<h3>A small example</h3><p>The hotel app must keep at least one night manager on duty.</p><ul><li>Asha is on duty.</li><li>Ravi is on duty.</li><li>Both ask at once whether the other can cover.</li></ul><p>Can both leave after each sees two managers on duty?</p>`,
+  intuition:`Two people edit separate copies of a duty chart. Each sees the old chart with two names and erases their own name. When the edits meet, nobody remains.`,
   how:{
-    steps:[`<b>Dirty read:</b> seeing another transaction’s uncommitted write. Prevented from Read Committed up.`, `<b>Non-repeatable read:</b> reading the same row twice and getting different values. Prevented by Repeatable Read / snapshot isolation.`, `<b>Phantom:</b> re-running a range query returns new rows inserted meanwhile. Prevented by serializable (and by snapshot reads in many engines).`, `<b>Lost update:</b> two read-modify-write cycles overwrite each other. Prevented by atomic updates, locks or first-updater-wins.`, `<b>Write skew:</b> two transactions read overlapping data and write different rows, breaking an invariant. Only <b>Serializable</b> prevents it.`, `<b>MVCC:</b> the database keeps multiple versions of rows; each transaction reads from a consistent snapshot, so readers don’t block writers.`],
-    html:h.table(['Level', 'Dirty read', 'Non-repeatable', 'Phantom', 'Write skew'], [['Read Uncommitted', 'possible', 'possible', 'possible', 'possible'], ['Read Committed (Postgres default)', '—', 'possible', 'possible', 'possible'], ['Repeatable Read / Snapshot (MySQL default)', '—', '—', 'engine-dependent', 'possible'], ['Serializable', '—', '—', '—', '—']]),
-    diagram:{title:'Write skew under snapshot isolation', w:760, h:240, alt:'Two transactions both read that two doctors are on call, then each takes a different doctor off call, leaving none.',
-      nodes:[{id:'t1', type:'service', label:'T1 (Dr. Asha)', x:110, y:60, w:140}, {id:'t2', type:'service', label:'T2 (Dr. Ravi)', x:110, y:190, w:140}, {id:'db', type:'db', label:'on_call table', sub:'Asha ✓  Ravi ✓', x:480, y:125, w:160}],
+    intro:'<h3>What happens behind the scenes</h3><p>Watch two duty changes overlap.</p>',
+    steps:[
+      {icon:'📋', title:'Each reads a view', text:'Asha and Ravi each read a database view with two managers on duty.'},
+      {icon:'✍️', title:'Each changes a different row', text:'Asha and Ravi each mark themselves off. Their writes do not touch the same row.'},
+      {icon:'⚠️', title:'The rule breaks', text:'Both changes may commit under snapshot isolation, leaving no night manager.'},
+      {icon:'🛑', title:'Serializable catches it', text:'Serializable isolation makes the result behave like one transaction ran first. One change must retry or fail.'},
+      {icon:'📸', title:'MVCC keeps views', text:'Multi-version concurrency control stores older row versions so readers can see a consistent snapshot.'}
+    ],
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Duty chart', 'Database idea'], [['Read only finished edits', 'Read Committed.'], ['Read one stable photocopy', 'Snapshot view through MVCC.'], ['Act as if changes took turns', 'Serializable.']])}</div><div class="callout tip"><b>Important point</b><p>A stable snapshot does not always protect a rule that depends on several rows.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Hotel work', 'Needed care'], [['Read a hotel description', 'A normal committed view may be enough.'], ['Keep one manager on duty', 'Use a rule or isolation that blocks both leaving.'], ['Book the last room', 'Use a safe concurrent update.']])}</div>`,
+    diagram:{title:'Both managers leave in one snapshot', w:760, h:240, alt:'Asha and Ravi each see two managers on duty. They update different rows, leaving no manager unless one transaction is stopped.',
+      nodes:[{id:'t1', type:'service', label:'Asha change', x:110, y:60, w:140}, {id:'t2', type:'service', label:'Ravi change', x:110, y:190, w:140}, {id:'db', type:'db', label:'Duty table', sub:'Asha ✓  Ravi ✓', x:480, y:125, w:160}],
       edges:[{from:'t1', to:'db'}, {from:'t2', to:'db'}],
       steps:[
-        {note:'Both transactions start and take snapshots. Each counts doctors on call: <b>2</b>.', flow:[['t1', 'db', 'COUNT = 2'], ['t2', 'db', 'COUNT = 2']], parallel:true},
-        {note:'T1: “2 ≥ 2, so I can leave” → sets Asha off call. T2 independently sets Ravi off call. Different rows — no write conflict.', flow:[['t1', 'db', 'UPDATE Asha'], ['t2', 'db', 'UPDATE Ravi']], parallel:true},
-        {note:'Both commit. Snapshot isolation sees no conflicting writes… and now <b>zero</b> doctors are on call.', sub:{db:'Asha ✗  Ravi ✗'}, status:{db:'hot'}},
-        {note:'Under <b>Serializable</b>, the database detects the read–write dependency cycle and aborts one transaction, which retries and sees count = 1.', status:{db:'ok'}, sub:{db:'Asha ✗  Ravi ✓'}, hl:['db']}
+        {note:'Both changes read that Asha and Ravi are on duty.', flow:[['t1', 'db', 'count 2'], ['t2', 'db', 'count 2']], parallel:true},
+        {note:'Each manager marks only their own row off duty.', flow:[['t1', 'db', 'Asha off'], ['t2', 'db', 'Ravi off']], parallel:true},
+        {note:'Both changes commit under this snapshot model. No manager remains.', sub:{db:'Asha ✗  Ravi ✗'}, status:{db:'hot'}},
+        {note:'Serializable can stop one change. The remaining manager stays on duty.', status:{db:'ok'}, sub:{db:'Asha ✗  Ravi ✓'}, hl:['db']}
       ]},
-    deep:`<p><b>MVCC in PostgreSQL:</b> each row version carries creating/deleting transaction IDs; a snapshot decides visibility; old versions are reclaimed by VACUUM (long-running transactions block cleanup and cause bloat). <b>Serializable</b> in PostgreSQL uses Serializable Snapshot Isolation (SSI, since 9.1), which tracks read–write dependencies and aborts transactions that could form a cycle — applications must retry on serialization failures.</p><p><b>Names lie:</b> the ANSI levels were defined by anomalies and are ambiguous (Berenson et al., 1995). Oracle’s “SERIALIZABLE” is actually snapshot isolation; MySQL InnoDB’s default Repeatable Read uses consistent snapshots for plain reads but locking reads see the latest data. Always check the engine’s actual guarantees (Jepsen analyses are a good reference). Practical defences: use <code>SELECT … FOR UPDATE</code> on the rows your decision depends on, materialise conflicts (a row to lock), add constraints, or run the critical transactions at Serializable with retries.</p>`
+    deep:`<h4>The numbers</h4><p>Follow the clock. At 0 ms, Asha reads a count of 2 on duty. At 1 ms, Ravi reads 2. At 5 ms, Asha marks herself off and commits. At 6 ms, Ravi does the same. The count is now 0.</p><p>Under Serializable, the database spots at 6 ms that Ravi's decision rested on a count Asha just changed. It aborts Ravi. He retries, reads 1, and the app refuses his request.</p><h4>When it goes wrong</h4><p>You can fix this without Serializable. Lock both duty rows with SELECT ... FOR UPDATE before deciding. Or keep one counter row that both transactions must update, so they collide.</p><h4>How it works inside</h4><p>Each update in an MVCC database writes a new row version. Cleanup removes versions that no open snapshot may still need. One snapshot left open for hours can make old versions pile up.</p>`
   },
-  tradeoffs:{use:[`<b>Read Committed</b> for most OLTP, with atomic updates (<code>SET x = x - 1</code>) and explicit locks where needed`, `<b>Serializable</b> for invariant-heavy logic (bookings, scheduling, double-entry rules)`], avoid:[`Read-modify-write in application code without locking or version checks`, `Long transactions under MVCC (bloat, locks)`, `Assuming the default level prevents write skew`], alt:[`Database constraints (UNIQUE, CHECK, exclusion constraints)`, `Optimistic version columns`, `Single-writer designs (one actor owns the entity)`]},
+  tradeoffs:{use:[`For the night-manager rule, Serializable or a suitable database constraint can stop both leaving.`, `For a hotel description read, weaker isolation may be enough.`], avoid:[`Do not assume a stable snapshot prevents every multi-row rule from breaking.`, `Do not retry an aborted transaction without checking its result.`], alt:[`Lock the row that represents the duty rule before either manager changes it.`]},
   real:[
-    {co:'PostgreSQL', tier:'confirmed', text:'Defaults to Read Committed and implements Serializable using Serializable Snapshot Isolation, which may abort transactions with serialization failures that clients must retry.', src:'PostgreSQL documentation — transaction isolation'},
-    {co:'MySQL InnoDB', tier:'confirmed', text:'Defaults to Repeatable Read, using MVCC consistent reads plus next-key locking for locking reads.', src:'MySQL Reference Manual — InnoDB transaction isolation levels'},
-    {co:'Research', tier:'confirmed', text:'“A Critique of ANSI SQL Isolation Levels” showed the standard’s definitions are ambiguous and introduced snapshot isolation and write skew into the formal discussion.', src:'Berenson et al., SIGMOD 1995'}
+    {co:'PostgreSQL', tier:'confirmed', text:'PostgreSQL documents that Serializable transactions may be aborted when their overlap would produce an unsafe result.', src:'PostgreSQL transaction isolation documentation'}
   ],
-  mistakes:[`Not knowing your database’s default isolation level`, `Check-then-act in application code (“if seats > 0 then book”)`, `Serializable without retry logic`],
-  interview:[`For a booking system, say exactly how double-booking is prevented (lock, constraint or serializable)`, `Name write skew and the doctors-on-call example`],
-  tryit:{note:'Run each anomaly at each isolation level on a small MVCC engine and see what each transaction observes.', pg:'isolation'},
-  sources:[`Berenson et al., “A Critique of ANSI SQL Isolation Levels”, SIGMOD 1995`, `Ports & Grittner, “Serializable Snapshot Isolation in PostgreSQL”, VLDB 2012`, `Kleppmann, DDIA ch. 7`]
+  mistakes:[`Assuming the hotel database default level protects the duty rule.`, `Ignoring a Serializable retry after one manager change is stopped.`],
+  interview:[`Trace the manager write skew and explain why different rows can still break one rule.`, `Name how the hotel app handles a stopped transaction.`],
+  tryit:[{quiz:[
+    {q:'Why can both managers leave under the snapshot example?', options:['They use one phone', 'There are three managers', 'The hotel has no database', 'They write different rows after reading the same old view'], answer:3, why:'Neither write directly conflicts, but together they break the rule.'},
+    {q:'What may Serializable do to protect the duty rule?', options:['Stop one overlapping transaction', 'Delete both managers', 'Skip the database', 'Change the hotel name'], answer:0, why:'One transaction must retry or fail so the result is safe.'}
+  ]}, {note:'Run the isolation playground and compare what overlapping hotel transactions can observe.', pg:'isolation'}],
+  sources:[`PostgreSQL transaction isolation documentation`, `Berenson and others, A Critique of ANSI SQL Isolation Levels (1995)`]
 },
 {
   id:'locking', title:'Optimistic vs pessimistic concurrency control', minutes:8, tags:['optimistic locking','pessimistic locking','SELECT FOR UPDATE','version column','deadlock'],
-  summary:'Pessimistic: lock first, then work. Optimistic: work, then check nobody changed it, and retry if they did. Contention decides.',
-  problem:`<p>Two users edit the same product description at once; the second save silently overwrites the first. Meanwhile, your ticketing system locks the “seats” row for every booking and at 10:00 AM thousands of requests queue behind one lock. Both are concurrency-control choices — one too loose, one too tight.</p>`,
-  intuition:`Pessimistic: putting a “do not disturb” sign on the meeting room before using it — safe, but others wait. Optimistic: just using the room, and if someone else used it meanwhile (the whiteboard changed), you redo your work — no waiting, but wasted effort when it’s busy.`,
+  summary:'Optimistic control checks whether data changed before saving. Pessimistic control locks data before working. Both help stop one hotel change from silently overwriting another.',
+  problem:`<h3>A small example</h3><p>Two hotel staff edit one room description. Meanwhile, two guests try to book its last available night.</p><ul><li>Staff edits may take minutes.</li><li>A room booking should finish quickly.</li><li>Conflicting changes must be noticed.</li></ul><p>When should the app check for a conflict, and when should it lock first?</p>`,
+  intuition:`Optimistic editing is writing on separate copies and checking before filing yours. Pessimistic editing is reserving the one folder first, so others wait their turn.`,
   how:{
-    steps:[`<b>Pessimistic:</b> <code>SELECT … FOR UPDATE</code> locks rows until commit; others wait. Risks: lock waits, deadlocks, long transactions holding locks.`, `<b>Optimistic:</b> read the row with a <code>version</code>; update with <code>WHERE id = ? AND version = ?</code>; if 0 rows changed, someone else won — reload and retry (or tell the user).`, `Low contention → optimistic wins (no waiting). High contention on the same rows → optimistic wastes work; pessimistic or redesign.`, `Prefer <b>atomic statements</b> where possible: <code>UPDATE stock SET qty = qty - 1 WHERE id = ? AND qty &gt; 0</code> needs no explicit lock at all.`, `Deadlocks: lock rows in a consistent order; keep transactions short; set lock timeouts.`],
-    html:h.code('sql', `-- Optimistic: version column
-SELECT id, body, version FROM docs WHERE id = 7;           -- version = 12
-UPDATE docs SET body = $1, version = version + 1
-WHERE id = 7 AND version = 12;                               -- 0 rows → conflict, retry
-
--- Pessimistic: lock the row for the rest of the transaction
-BEGIN;
-SELECT qty FROM inventory WHERE sku = 'TSHIRT-M' FOR UPDATE;
-UPDATE inventory SET qty = qty - 1 WHERE sku = 'TSHIRT-M';
-COMMIT;
-
--- Often best: a single atomic, conditional statement
-UPDATE inventory SET qty = qty - 1 WHERE sku = 'TSHIRT-M' AND qty > 0;  -- 1 row = sold, 0 = sold out`, 'concurrency.sql'),
-    diagram:{title:'Optimistic conflict detection', w:740, h:220, alt:'Two editors read version 12; the first update succeeds and bumps to 13; the second update finds no matching version and must retry.',
-      nodes:[{id:'a', type:'client', label:'Editor A', x:90, y:60}, {id:'b', type:'client', label:'Editor B', x:90, y:170}, {id:'db', type:'db', label:'docs #7', sub:'version 12', x:470, y:115, w:150}],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow the two room-description editors first.</p>',
+    steps:[
+      {icon:'📖', title:'Both read version 12', text:'Each staff member opens the same room description and its version number.'},
+      {icon:'✍️', title:'A saves first', text:'A changes the description. The database saves version 13.'},
+      {icon:'⚠️', title:'B detects a conflict', text:'B tries to save against version 12. The database finds no matching version and asks B to review again.'},
+      {icon:'🔒', title:'Lock short critical work', text:'For the last room, the app may lock the room row while it confirms one booking.'},
+      {icon:'🧮', title:'Use one safe update when possible', text:'A single update can reduce room count only if it remains above zero.'}
+    ],
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Shared folder', 'Hotel database'], [['Check whether the page changed before filing', 'Optimistic version check.'], ['Reserve the folder before editing', 'Pessimistic lock.']])}</div><div class="callout tip"><b>Important point</b><p>Keep locks short. A person editing a form should not block every other editor for minutes.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Hotel action', 'Useful choice'], [['Edit a room description', 'Version check and show a conflict.'], ['Book the last room', 'Short lock or conditional update.'], ['Reduce available count by one', 'One conditional database statement.']])}</div>`,
+    diagram:{title:'Two staff edit one room description', w:740, h:220, alt:'Two editors read version 12. A saves version 13. B sees a conflict instead of silently replacing A.',
+      nodes:[{id:'a', type:'client', label:'Editor A', x:90, y:60}, {id:'b', type:'client', label:'Editor B', x:90, y:170}, {id:'db', type:'db', label:'Room #7', sub:'version 12', x:470, y:115, w:150}],
       edges:[{from:'a', to:'db'}, {from:'b', to:'db'}],
       steps:[
-        {note:'Both editors load the document at <b>version 12</b>.', flow:[['a', 'db', 'SELECT'], ['b', 'db', 'SELECT']], parallel:true},
-        {note:'A saves first: <code>… WHERE version = 12</code> matches → version becomes 13.', flow:[['a', 'db', 'UPDATE v12→13'], ['db', 'a', '1 row']], sub:{db:'version 13'}, hl:['a']},
-        {note:'B saves: <code>… WHERE version = 12</code> matches <b>0 rows</b>. Conflict detected — no silent overwrite.', flow:[['b', 'db', 'UPDATE v12→13'], ['db', 'b', '0 rows']], hl:['b']},
-        {note:'B reloads version 13, merges or shows a conflict to the user, and retries.', flow:[['b', 'db', 'reload v13']], hl:['b']}
+        {note:'Both staff read version 12 of room #7.', flow:[['a', 'db', 'read'], ['b', 'db', 'read']], parallel:true},
+        {note:'A saves first. The room description becomes version 13.', flow:[['a', 'db', 'save v13'], ['db', 'a', 'saved']], sub:{db:'version 13'}, hl:['a']},
+        {note:'B tries to save against version 12. The check finds a conflict.', flow:[['b', 'db', 'save v12?'], ['db', 'b', 'conflict']], hl:['b']},
+        {note:'B reloads version 13 and decides whether to apply their change.', flow:[['b', 'db', 'reload v13']], hl:['b']}
       ]},
-    deep:`<p><b>Deadlocks:</b> T1 locks row A then wants B; T2 locks B then wants A. Databases detect cycles and abort one victim — your code must retry. Prevent with consistent lock ordering (e.g. always lock the lower account ID first in a transfer). <code>SKIP LOCKED</code> lets job-queue workers grab different rows without waiting; <code>NOWAIT</code> fails fast instead of waiting.</p><p><b>HTTP-level optimistic concurrency:</b> <code>ETag</code> + <code>If-Match</code> on PUT gives the same check across an API (412 Precondition Failed on conflict). <b>Hot rows</b> (one global counter) defeat both approaches; split them (N counter shards summed on read) or batch updates.</p>`
+    deep:`<h4>The numbers</h4><p>Say 3 rooms are left and 5 guests book at once. Each runs a single update: reduce the count by 1 only where the count is above 0. The first 3 changes 1 row each. The last 2 change 0 rows, so the app tells them the rooms are gone.</p><p>Now say the booking lock is held for 20 ms. One room can handle 1,000 ÷ 20 = 50 bookings a second. A staff form locked for 5 minutes holds the row for 300,000 ms. That is 300,000 ÷ 20 = 15,000 times longer.</p><h4>When it goes wrong</h4><p>When two transactions deadlock, the database must break the tie by aborting one. PostgreSQL waits 1 second by default before it looks for a deadlock. The app should retry the aborted transaction, and a short transaction makes a deadlock less likely.</p>`
   },
-  tradeoffs:{use:[`<b>Optimistic:</b> user edits, low-contention updates, long think time (users editing forms)`, `<b>Pessimistic:</b> short, high-contention critical sections (inventory decrement, ledger rows)`, `<b>Atomic conditional updates</b> whenever the logic fits in one statement`], avoid:[`Holding row locks across network calls or user think time`, `Optimistic retries on a single hot row`], alt:[`Queue the work through a single writer per key`, `Counter sharding`, `Serializable isolation with retries`]},
+  tradeoffs:{use:[`For slow room-description edits, use a version check so staff do not hold locks while typing.`, `For last-room booking, use a short lock or one conditional update.`], avoid:[`Do not silently overwrite A’s room edit with B’s old version.`, `Do not hold a room lock while a guest fills a form.`], alt:[`If one conditional update expresses the room rule, use it before adding a longer lock.`]},
   real:[
-    {co:'PostgreSQL / MySQL', tier:'confirmed', text:'Support <code>SELECT … FOR UPDATE</code>, <code>NOWAIT</code> and <code>SKIP LOCKED</code>; SKIP LOCKED is widely used to build job queues on a relational table.', src:'PostgreSQL and MySQL documentation'},
-    {co:'JPA / Hibernate', tier:'confirmed', text:'The <code>@Version</code> annotation implements optimistic locking with a version column, throwing an exception on conflicting updates.', src:'Jakarta Persistence specification'},
-    {co:'HTTP', tier:'confirmed', text:'Conditional requests with <code>If-Match</code> and ETags, returning 412 on mismatch, provide optimistic concurrency for APIs.', src:'RFC 9110 — conditional requests'}
+    {co:'PostgreSQL', tier:'confirmed', text:'PostgreSQL documents row locks and conditional updates for concurrent changes.', src:'PostgreSQL explicit locking documentation'}
   ],
-  mistakes:[`Read-modify-write with no version check (lost updates)`, `Locking in inconsistent order (deadlocks)`, `Locks held while calling a payment gateway`],
-  interview:[`For each contended write, say: atomic statement, optimistic version or pessimistic lock — and why`],
-  tryit:{note:'Simulate many clients updating a few rows. Compare throughput, wasted retries and lock waiting.', mount:host => lockSim(host)},
-  sources:[`Kung & Robinson, “On Optimistic Methods for Concurrency Control”, ACM TODS 1981`, `PostgreSQL docs — explicit locking`, `RFC 9110`]
+  mistakes:[`Saving B’s old room version without a conflict check.`, `Holding a last-room lock while a guest thinks about payment.`],
+  interview:[`Compare version checks and short locks for two hotel actions.`, `Explain a conditional update for the last room.`],
+  tryit:[{quiz:[
+    {q:'What happens when B saves against version 12 after A created version 13?', options:['Both edits are always merged', 'B gets a conflict', 'A is silently erased', 'The database disappears'], answer:1, why:'The version check rejects an outdated edit.'},
+    {q:'Why keep a last-room lock short?', options:['It hides the hotel', 'It speeds up typing', 'Other guests wait while it is held', 'It changes the room name'], answer:2, why:'Long locks make other booking requests wait.'}
+  ]}, {note:'Compare version retries and lock waiting as more guests update the same room row.', mount:host => lockSim(host)}],
+  sources:[`PostgreSQL explicit locking documentation`]
 },
 {
   id:'replication', title:'Replication: leader-follower, multi-leader, leaderless', minutes:12, tags:['replication','leader','follower','replica lag','failover','quorum','multi-leader'],
-  summary:'Copies of data on several machines for availability, read scaling and locality. The hard parts are lag, failover and conflicting writes.',
-  problem:`<p>A user updates their profile photo, refreshes, and sees the old photo — the read went to a replica that hasn’t caught up. Later, the primary database dies; the replica that gets promoted is missing the last two seconds of payments. Replication adds copies; it also adds new ways to be wrong.</p>`,
-  intuition:`A head chef (leader) writes the recipe changes; assistant chefs (followers) copy them into their notebooks a moment later. Ask an assistant immediately after a change and you may get the old recipe. If the head chef faints, an assistant takes over — with whatever their notebook says.`,
+  summary:'Replication keeps database copies on several machines. A leader may accept writes while followers copy them. Copies help reads and failures, but replication lag can show old hotel data.',
+  problem:`<h3>A small example</h3><p>A guest changes a hotel booking, then refreshes the page.</p><ul><li>The main database accepted the change.</li><li>A second database copy is still catching up.</li><li>The refreshed page shows the old dates.</li></ul><p>How can the app use copies without misleading the guest?</p>`,
+  intuition:`A hotel front desk updates the master reservation book. Other desks copy it soon after. Ask one of them too early and it may still show the old stay.`,
   how:{
-    steps:[`<b>Leader-follower</b> (primary-replica): all writes go to the leader; it streams its log to followers; reads can go to followers.`, `<b>Synchronous</b> replication: the leader waits for followers to confirm → no data loss on failover, but slower and blocked if a follower is down. <b>Asynchronous</b>: fast, but recent writes can be lost. <b>Semi-sync</b>: wait for at least one.`, `<b>Replication lag</b> causes anomalies: read-your-writes violations, monotonic-read violations (time going backwards).`, `<b>Failover</b>: detect leader failure, choose the most up-to-date follower, reconfigure clients — and fence the old leader (split brain).`, `<b>Multi-leader</b>: several regions accept writes; needs conflict resolution (last-write-wins, merge, CRDTs).`, `<b>Leaderless</b> (Dynamo-style): write to N replicas, succeed with W acks; read R replicas; R + W &gt; N gives overlapping quorums (Module 6).`],
-    diagram:{title:'Async replication, lag and failover', w:760, h:270, alt:'A leader replicates to two followers; a read from a lagging follower is stale; the leader dies and a follower is promoted.',
+    intro:'<h3>What happens behind the scenes</h3><p>Follow one changed booking through three database copies.</p>',
+    steps:[
+      {icon:'✍️', title:'Write to the leader', text:'The hotel app saves the new booking dates on one database that accepts writes.'},
+      {icon:'📋', title:'Followers copy the change', text:'Other databases copy that write. A follower can be briefly behind the leader.'},
+      {icon:'👀', title:'Avoid an old refresh', text:'After a guest edits, read from the leader or wait until a follower has that change.'},
+      {icon:'🛟', title:'Handle leader failure', text:'A caught-up follower can take over when the leader stops. The old leader must not keep accepting writes.'},
+      {icon:'🌍', title:'Compare other shapes', text:'Multi-leader allows several writers but needs conflict rules. Leaderless writes to several copies and reads from them.'}
+    ],
+    diagram:{title:'A changed booking reaches followers', w:760, h:270, alt:'The hotel booking leader accepts a date change. One follower lags, and another can take over after a failure.',
       nodes:[{id:'c', type:'client', label:'App', x:80, y:135}, {id:'l', type:'db', label:'Leader', sub:'log pos 1042', x:340, y:135}, {id:'f1', type:'db', label:'Follower 1', sub:'pos 1042', x:600, y:60}, {id:'f2', type:'db', label:'Follower 2', sub:'pos 1039 (lag)', x:600, y:210}],
       edges:[{from:'c', to:'l'}, {from:'l', to:'f1'}, {from:'l', to:'f2'}, {from:'c', to:'f2', curve:.2, dashed:true}],
       steps:[
-        {note:'The app writes a new profile photo to the <b>leader</b>, which acknowledges immediately (async).', flow:[['c', 'l', 'UPDATE photo'], ['l', 'c', 'OK']], sub:{l:'log pos 1043'}, hl:['l']},
-        {note:'The change streams to followers; Follower 2 is a few hundred milliseconds behind.', flow:[['l', 'f1', 'WAL 1043'], ['l', 'f2', 'WAL 1040…']], sub:{f1:'pos 1043'}, parallel:true},
-        {note:'The app reads from Follower 2 and gets the <b>old photo</b> — a read-your-writes violation.', flow:[['c', 'f2', 'SELECT'], ['f2', 'c', 'old photo']], status:{f2:'hot'}, hl:['f2']},
-        {note:'The leader crashes. Follower 1 (most up to date) is <b>promoted</b>; any writes the leader acked but never shipped are lost.', status:{l:'down', f2:'ok'}, sub:{f1:'NEW LEADER'}, hl:['f1']},
-        {note:'Follower 2 now replicates from the new leader, and the old leader must be <b>fenced</b> so it can’t accept writes if it comes back (split brain).', flow:[['f1', 'f2', 'WAL']], hl:['f1', 'f2']}
+        {note:'The guest changes booking dates on the leader.', flow:[['c', 'l', 'new dates'], ['l', 'c', 'saved']], sub:{l:'log pos 1043'}, hl:['l']},
+        {note:'Followers copy the change. Follower 2 is still behind.', flow:[['l', 'f1', 'change 1043'], ['l', 'f2', 'older']], sub:{f1:'pos 1043'}, parallel:true},
+        {note:'Reading Follower 2 now shows the guest old dates.', flow:[['c', 'f2', 'read'], ['f2', 'c', 'old dates']], status:{f2:'hot'}, hl:['f2']},
+        {note:'The leader stops. The most current follower may take over.', status:{l:'down', f2:'ok'}, sub:{f1:'NEW LEADER'}, hl:['f1']},
+        {note:'The old leader must not accept writes when it returns.', flow:[['f1', 'f2', 'new changes']], hl:['f1', 'f2']}
       ]},
-    deep:`<p><b>Read-your-writes techniques:</b> read from the leader for a few seconds after a user writes; track the log position of the user’s last write and only read from replicas that have reached it; or pin the user’s session to the leader. <b>Monotonic reads:</b> always route a user to the same replica.</p><p><b>Replication methods:</b> statement-based (fragile with non-determinism), physical WAL shipping (PostgreSQL streaming replication — byte-level, same major version), and logical/row-based (MySQL binlog ROW format, PostgreSQL logical replication — enables CDC and cross-version upgrades).</p><p><b>Failover is the dangerous part:</b> false positives during network blips promote a new leader while the old one is alive; without fencing (STONITH, leases, epoch numbers) both accept writes. Automated tools (Orchestrator, Patroni, cloud-managed failover) encode this — and still need rehearsal.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Reservation desks', 'Database copies'], [['Master book accepts the edit', 'Leader takes the write.'], ['Other desks copy the edit', 'Followers catch up later.'], ['Master desk closes', 'A current follower can take over.']])}</div><div class="callout tip"><b>Important point</b><p>A copy that is available may still be old. The app must know when current booking data matters.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Hotel read', 'Safer choice'], [['Guest refreshes after an edit', 'Read the leader or a caught-up follower.'], ['Public hotel description', 'A slightly delayed follower may be enough.'], ['Confirmed payment', 'Choose a write rule that meets the loss requirement.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say the leader saves the new dates at 0 ms and the follower applies them at 200 ms. A refresh that reads the follower at 100 ms sees the old dates. One fix is to read from the leader for, say, 5 seconds after a guest edits.</p><p>Say waiting for all 3 followers is required and each is up 99.9% of the time. All three are up 0.999 × 0.999 × 0.999 ≈ 0.997. Writes would stall about 0.3% of the time, roughly 26 hours a year. Many setups wait for just 1 follower to avoid this.</p><h4>When it goes wrong</h4><p>Say the leader handles 150 writes a second and a follower is 2 seconds behind when the leader dies. 150 × 2 = 300 acknowledged writes are missing on the new leader. When the old leader returns, those writes must be thrown away or merged by hand.</p>`
   },
-  tradeoffs:{use:[`<b>Leader-follower async</b> for read scaling and HA in most apps`, `<b>Synchronous/semi-sync</b> where losing an acknowledged write is unacceptable`, `<b>Multi-leader</b> for multi-region writes or offline-capable clients — only with a conflict strategy`, `<b>Leaderless</b> for always-writeable, partition-tolerant KV workloads`], avoid:[`Reading from replicas right after writes without a strategy`, `Automatic failover without fencing`, `Multi-leader with last-write-wins for money`], alt:[`Consensus-replicated databases (Raft/Paxos: etcd, Spanner, CockroachDB)`, `Caching for read scaling`]},
+  tradeoffs:{use:[`For public hotel details, follower reads can share read work when brief delay is acceptable.`, `For a guest’s changed booking, route the next read to current data.`], avoid:[`Do not promise a booking survived failover if it was acknowledged before another copy received it.`, `Do not let two leaders accept conflicting room bookings.`], alt:[`For a small hotel app, one database and tested backups may be simpler before read copies are needed.`]},
   real:[
-    {co:'GitHub', tier:'confirmed', text:'In October 2018 a 43-second network partition triggered automated MySQL failover to another region; writes landed on both sides, and reconciling them led to about 24 hours of degraded service.', src:'GitHub Engineering, “October 21 post-incident analysis” (2018)'},
-    {co:'Uber', tier:'confirmed', text:'Cited PostgreSQL’s physical (WAL) replication characteristics — write amplification and replication bandwidth — among the reasons for moving core workloads to MySQL.', src:'Uber Engineering, “Why Uber Engineering Switched from Postgres to MySQL” (2016)'},
-    {co:'Amazon (Dynamo)', tier:'confirmed', text:'Dynamo uses leaderless replication with sloppy quorums and hinted handoff so the shopping cart stays writeable during failures.', src:'DeCandia et al., SOSP 2007'}
+    {co:'GitHub', tier:'confirmed', text:'GitHub’s 2018 incident report describes the difficulty of reconciling writes after a database failover.', src:'GitHub Engineering, October 21 post-incident analysis (2018)'}
   ],
-  mistakes:[`Ignoring replica lag in user-facing reads`, `Failing over without fencing the old leader`, `Assuming async replication never loses data`],
-  interview:[`State sync vs async and what is lost on failover (RPO)`, `Explain read-your-writes and how you’d guarantee it`],
-  tryit:{note:'Run a leader with two followers. Change the replication mode, add lag, read from followers, and kill the leader.', pg:'replication'},
-  sources:[`Kleppmann, DDIA ch. 5`, `GitHub post-incident analysis (2018)`, `DeCandia et al., Dynamo (2007)`]
+  mistakes:[`Sending a guest’s immediate refresh to a lagging follower.`, `Assuming an acknowledged async write has reached every follower.`],
+  interview:[`Explain why a follower may show old hotel dates.`, `State how the app chooses a follower after leader failure.`],
+  tryit:[{quiz:[
+    {q:'Why can a guest see old booking dates after changing them?', options:['The room has no number', 'The browser changed the hotel', 'Every leader is read-only', 'A follower has not copied the write yet'], answer:3, why:'A follower may lag behind the leader.'},
+    {q:'What can asynchronous copying risk after the leader fails?', options:['Losing a recent acknowledged write', 'Changing every room photo', 'A new city name', 'A faster booking always'], answer:0, why:'The leader may answer before another copy has the write.'}
+  ]}, {note:'Change follower lag and copying mode, then read after a booking edit and stop the leader.', pg:'replication'}],
+  sources:[`GitHub Engineering, October 21 post-incident analysis (2018)`]
 },
 {
   id:'sharding', title:'Sharding (partitioning)', minutes:12, tags:['sharding','partitioning','hash','range','directory','geo','hot shard','resharding'],
-  summary:'Split data across machines by key so each holds a slice. Pick the shard key carefully: it decides balance, hot spots and which queries stay cheap.',
-  problem:`<p>Your single PostgreSQL primary is at 90% CPU and 6 TB, growing 200 GB a month. Bigger hardware buys a year. To keep growing, the data must be split across many databases — but split by <em>what</em>? By user ID? Date? City? Each choice makes some queries trivial and others very expensive.</p>`,
-  intuition:`A library too big for one building is split across branches. By surname (A–F, G–M…) is a range split: easy to find a surname, but the “S” branch is mobbed. By a hash of the member ID spreads everyone evenly, but “all books borrowed in Pune” means visiting every branch. A directory desk that says which branch holds which member is flexible — and becomes the thing everyone must ask first.`,
+  summary:'Sharding splits records across database machines. A shard key chooses where each record lives. The key affects which hotel queries stay local and which need several machines.',
+  problem:`<h3>A small example</h3><p>The hotel app’s booking database grows beyond one machine’s tested capacity.</p><ul><li>Guests book rooms at many hotels.</li><li>Availability checks focus on one hotel.</li><li>Reports ask about all hotels in a city.</li></ul><p>Should the app split records by guest, hotel, city, or another key?</p>`,
+  intuition:`A large library uses branches. Put all books for one author in one branch and that author is easy to find. A citywide count may need every branch.`,
   how:{
-    steps:[`<b>Range</b> sharding: contiguous key ranges per shard. Efficient range scans; risk of hot ranges (e.g. newest IDs or today’s date).`, `<b>Hash</b> sharding: shard = hash(key) mod N (or consistent hashing). Even spread; range queries hit every shard.`, `<b>Directory</b> sharding: a lookup table maps keys (or tenants) to shards. Flexible moves; the directory must be fast and highly available.`, `<b>Geo</b> sharding: by region/country — locality and data-residency compliance.`, `Choose a <b>shard key</b> that keeps related data together (all of a user’s orders) and spreads load. Cross-shard queries and transactions become expensive.`, `<b>Resharding</b>: adding shards moves data. Plan with many logical shards mapped to fewer physical nodes, or consistent hashing.`, `<b>Hot shards</b>: one celebrity/tenant overwhelms its shard → split that key, add a salt, or give the tenant its own shard.`],
-    diagram:{title:'Hash-sharded users and their orders', w:780, h:280, alt:'A router hashes user IDs to one of three shards; a per-user query hits one shard, a global query fans out to all.',
+    intro:'<h3>What happens behind the scenes</h3><p>Try hotel ID as the key for room bookings.</p>',
+    steps:[
+      {icon:'🏨', title:'Keep one hotel together', text:'A shard key is the value used to choose a database machine. Hotel ID can keep its rooms and bookings together.'},
+      {icon:'🔀', title:'Spread with a hash', text:'A hash turns hotel ID into a number that chooses one of several shards.'},
+      {icon:'📏', title:'Compare a range split', text:'A range gives each shard a group of IDs. A busy range can overload one shard.'},
+      {icon:'📒', title:'Consider a directory', text:'A directory can list which shard holds each hotel, making moves flexible but adding a lookup.'},
+      {icon:'🌍', title:'Count cross-shard work', text:'A citywide report or one guest’s bookings at several hotels may need answers from several shards.'}
+    ],
+    diagram:{title:'Hotel bookings split by hotel ID', w:780, h:280, alt:'A router sends one hotel booking to one shard. A citywide question reaches all three shards.',
       nodes:[{id:'app', type:'service', label:'App + shard router', x:110, y:140, w:160}, {id:'s1', type:'db', label:'Shard 1', sub:'hash % 3 = 0', x:470, y:50}, {id:'s2', type:'db', label:'Shard 2', sub:'hash % 3 = 1', x:470, y:140}, {id:'s3', type:'db', label:'Shard 3', sub:'hash % 3 = 2', x:470, y:230}, {id:'an', type:'db', label:'Analytics copy', x:690, y:140, w:130}],
       edges:[{from:'app', to:'s1'}, {from:'app', to:'s2'}, {from:'app', to:'s3'}, {from:'s1', to:'an', dashed:true}, {from:'s2', to:'an', dashed:true}, {from:'s3', to:'an', dashed:true}],
       steps:[
-        {note:'“Orders of user 42”: hash(42) mod 3 = 1 → only <b>Shard 2</b>. Fast, because all of a user’s data shares the shard key.', flow:[['app', 's2', 'user 42'], ['s2', 'app']], hl:['s2']},
-        {note:'“Total orders in Pune today” has no shard key → <b>scatter-gather</b> across every shard, then merge.', flow:[['app', 's1', 'Q'], ['app', 's2', 'Q'], ['app', 's3', 'Q']], parallel:true},
-        {note:'A celebrity seller’s orders all land on Shard 3 → a <b>hot shard</b>.', status:{s3:'hot'}, flow:[['app', 's3'], ['app', 's3'], ['app', 's3']], parallel:true, hl:['s3']},
-        {note:'Global analytics shouldn’t scatter-gather the OLTP shards at all: stream changes into an <b>analytics store</b> instead.', status:{s3:'ok'}, flow:[['s1', 'an'], ['s2', 'an'], ['s3', 'an']], parallel:true, hl:['an']}
+        {note:'Hotel 42 routes to Shard 2. Its room bookings can be checked there.', flow:[['app', 's2', 'hotel 42'], ['s2', 'app']], hl:['s2']},
+        {note:'A citywide question reaches all three shards and combines their answers.', flow:[['app', 's1', 'city?'], ['app', 's2', 'city?'], ['app', 's3', 'city?']], parallel:true},
+        {note:'A very popular hotel can make one shard unusually busy.', status:{s3:'hot'}, flow:[['app', 's3'], ['app', 's3'], ['app', 's3']], parallel:true, hl:['s3']},
+        {note:'A separate report copy can answer broad questions without repeating them on every booking shard.', status:{s3:'ok'}, flow:[['s1', 'an'], ['s2', 'an'], ['s3', 'an']], parallel:true, hl:['an']}
       ]},
-    deep:`<p><b>Logical shards:</b> create many more shards than machines (e.g. 4,096 logical shards on 16 hosts). Rebalancing moves whole logical shards between hosts, never re-hashing keys. Instagram embedded the logical shard ID in every generated ID; Notion split into 480 logical shards across 32 physical databases.</p><p><b>Cross-shard concerns:</b> unique constraints and foreign keys no longer span shards; transactions across shards need 2PC or sagas; secondary indexes are either local (query every shard) or global (a separately partitioned index, updated asynchronously). <b>Middleware</b> like Vitess (MySQL) or Citus (PostgreSQL) handles routing, resharding and scatter-gather; NewSQL databases shard automatically.</p><p><b>Migration playbook:</b> dual-write or CDC into the new layout, backfill, verify with shadow reads, then cut over reads and finally writes — per tenant or key range, reversibly.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Library branches', 'Hotel data'], [['Keep one author together', 'Keep one hotel’s rooms together.'], ['Ask every branch for a citywide count', 'Ask every shard for a broad report.'], ['Move books when one branch fills', 'Move hotels when one shard fills.']])}</div><div class="callout tip"><b>Important point</b><p>The shard key should support the hotel app’s most important read and write path.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Hotel need', 'Key choice'], [['Correct availability for one hotel', 'Hotel ID keeps related rooms together.'], ['Many bookings at one very popular hotel', 'Plan for a hot hotel shard.'], ['Reports across all hotels', 'Use a separate report path.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Take 20 hash values, 0 to 19. With 4 shards, a key goes to the remainder of its value divided by 4. With 5 shards, it is the remainder when divided by 5. A key keeps its owner only for values 0, 1, 2 and 3. That is 4 of 20, so 80% of keys move when we add a fifth shard.</p><p>Now say we create 1,024 small logical shards first and spread them over 4 machines, 256 each. A fifth machine takes about 1,024 ÷ 5 ≈ 205 logical shards. No key is rehashed.</p><h4>When it goes wrong</h4><p>A citywide report asks 4 shards and waits for the slowest. Say each shard is slow 1% of the time. The report is slow 1 − 0.99⁴ ≈ 3.9% of the time, four times worse than one shard. Also, one very popular hotel can exceed its shard's fair share. Say it gets 30% of bookings while an even split is 25%.</p>`
   },
-  tradeoffs:{use:[`<b>Hash</b> for even load on point lookups (user ID, order ID)`, `<b>Range</b> for time-ordered scans — with pre-splitting or composite keys to avoid hot ends`, `<b>Directory/tenant</b> for multi-tenant SaaS with uneven tenants`, `<b>Geo</b> for latency and data residency`], avoid:[`Sharding before exhausting vertical scaling, replicas, caching and query tuning`, `A shard key that most queries don’t include`, `Monotonic keys on range shards`], alt:[`Read replicas + caching`, `Functional partitioning (different tables/services on different databases)`, `Distributed SQL (Spanner, CockroachDB, YugabyteDB, TiDB)`]},
+  tradeoffs:{use:[`For hotel availability, hotel ID can keep one hotel’s booking decision local.`, `Hash routing can spread many hotels across machines.`], avoid:[`Do not choose guest ID if every room check must inspect all guests for a hotel.`, `Do not shard before measuring whether one well-indexed machine can still serve the app.`], alt:[`Move broad reports off the booking path before splitting the original booking records.`]},
   real:[
-    {co:'Instagram', tier:'confirmed', text:'Sharded PostgreSQL into thousands of logical shards mapped to fewer physical servers, generating IDs that embed the logical shard ID.', src:'Instagram Engineering, “Sharding & IDs at Instagram” (2012)'},
-    {co:'Notion', tier:'confirmed', text:'Sharded its PostgreSQL monolith by workspace ID into 480 logical shards across 32 physical databases, migrating with double-writes and verification.', src:'Notion, “Herding elephants: lessons learned from sharding Postgres at Notion” (2021)'},
-    {co:'YouTube → Vitess', tier:'confirmed', text:'Vitess was built at YouTube to shard MySQL; it is now a CNCF project used by companies including Slack.', src:'vitess.io; Slack Engineering, “Scaling Datastores at Slack with Vitess” (2020)'}
+    {co:'Notion', tier:'confirmed', text:'Notion described splitting workspace data across logical and physical PostgreSQL shards.', src:'Notion Engineering, Herding elephants (2021)'}
   ],
-  mistakes:[`Choosing a shard key that splits a user’s data across shards`, `mod-N hashing with no plan for adding shards`, `Cross-shard joins on the hot path`, `Ignoring hot tenants/keys`],
-  interview:[`Name the shard key, why it fits the main queries, and how you’d reshard`, `Discuss hot shards and cross-shard queries proactively`],
-  tryit:{note:'Shard a workload by hash, range, consistent hashing or a directory. Add shards and watch data movement and hot spots.', pg:'sharding'},
-  sources:[`Instagram Engineering (2012)`, `Notion engineering blog (2021)`, `Vitess documentation`, `Kleppmann, DDIA ch. 6`]
+  mistakes:[`Choosing guest ID without checking the hotel availability query.`, `Adding shards without planning how hotels move later.`],
+  interview:[`Name hotel ID as a possible key and explain the local room query.`, `Describe the cost of a citywide query.`],
+  tryit:[{quiz:[
+    {q:'Which key can keep one hotel’s rooms and bookings together?', options:['Guest phone model', 'Hotel ID', 'Random browser color', 'Current second'], answer:1, why:'A room availability check can stay on one hotel shard.'},
+    {q:'Why does a citywide report need more work with hotel-ID shards?', options:['It removes the hotel', 'It has no rooms', 'It asks several shards', 'It changes the guest password'], answer:2, why:'Hotels in one city can live on different shards.'}
+  ]}, {note:'Try hotel-ID hash routing and range routing. Add a shard and watch movement and hot spots.', pg:'sharding'}],
+  sources:[`Notion Engineering, Herding elephants (2021)`]
 },
 {
   id:'consistent-hashing', title:'Consistent hashing and virtual nodes', minutes:9, tags:['consistent hashing','virtual nodes','hash ring','rebalancing'],
-  summary:'Put servers and keys on the same hash ring; each key belongs to the next server clockwise. Adding a server moves only ~1/N of keys. Virtual nodes smooth the spread.',
-  problem:`<p>Your cache cluster uses <code>server = hash(key) mod N</code>. You add a 5th server to 4 — and ~80% of keys suddenly map to a different server. The hit ratio collapses to near zero and the database is flooded. Adding capacity caused an outage.</p>`,
-  intuition:`Seats around a round dining table, with guests (keys) and waiters (servers) placed at fixed spots. Each guest is served by the next waiter clockwise. A new waiter joining only takes over the guests between themself and the previous waiter — nobody else changes waiter.`,
+  summary:'Consistent hashing places hotel keys and servers on one circle. Each key belongs to the next server clockwise. Virtual nodes give each server several positions for smoother balance.',
+  problem:`<h3>A small example</h3><p>The hotel app adds a fifth data server to four existing servers.</p><ul><li>Hotel IDs decide where records live.</li><li>The old rule divides a hash by the server count.</li><li>Changing the count moves many hotel IDs.</li></ul><p>Can the app add capacity while moving fewer hotels?</p>`,
+  intuition:`Place hotel cards and server desks around a round table. Each card goes to the next desk clockwise. A new desk only takes cards in the short arc before it.`,
   how:{
-    steps:[`Hash each server to a position on a ring (0 … 2³²−1).`, `Hash each key; walk clockwise to the first server — that server owns the key.`, `Add a server: it takes over only the keys between itself and its predecessor (≈ 1/N of all keys).`, `Remove a server: its keys move to its successor only.`, `With few servers, positions are uneven → some own huge arcs. <b>Virtual nodes</b>: each physical server appears at 100–256 positions, evening out load and spreading a failed server’s keys across many successors.`, `Weighted capacity: give bigger servers more virtual nodes.`],
-    diagram:{title:'Adding a server moves only one arc', w:700, h:280, alt:'Keys on a ring are owned by the next server clockwise; adding server D takes over only keys from C’s range.',
-      nodes:[{id:'A', type:'cache', label:'Server A', x:350, y:40}, {id:'B', type:'cache', label:'Server B', x:600, y:180}, {id:'C', type:'cache', label:'Server C', x:100, y:180}, {id:'D', type:'cache', label:'Server D', sub:'new', x:200, y:60, hidden:true}, {id:'k1', type:'client', label:'key “cart:9”', x:470, y:250, w:130}, {id:'k2', type:'client', label:'key “user:7”', x:110, y:90, w:130}],
+    intro:'<h3>What happens behind the scenes</h3><p>Watch hotel IDs move when server D joins a ring.</p>',
+    steps:[
+      {icon:'⭕', title:'Place servers on a ring', text:'A hash, a repeatable number from a key, gives each server a position on a circle.'},
+      {icon:'🏨', title:'Place each hotel', text:'Hash hotel ID and walk clockwise to the next server. That server holds the hotel records.'},
+      {icon:'➕', title:'Add a server', text:'D takes keys in the arc before it. Keys in other arcs keep their owners.'},
+      {icon:'➖', title:'Remove a server', text:'Its keys move to the next server clockwise.'},
+      {icon:'🔢', title:'Use virtual nodes', text:'Give each physical server several ring positions so one uneven arc matters less.'}
+    ],
+    diagram:{title:'Adding D moves one hotel-key arc', w:700, h:280, alt:'Hotel keys belong to the next server clockwise. Adding D moves only keys in its new arc.',
+      nodes:[{id:'A', type:'cache', label:'Server A', x:350, y:40}, {id:'B', type:'cache', label:'Server B', x:600, y:180}, {id:'C', type:'cache', label:'Server C', x:100, y:180}, {id:'D', type:'cache', label:'Server D', sub:'new', x:200, y:60, hidden:true}, {id:'k1', type:'client', label:'hotel:9', x:470, y:250, w:130}, {id:'k2', type:'client', label:'hotel:7', x:110, y:90, w:130}],
       edges:[{from:'A', to:'B', curve:.2}, {from:'B', to:'C', curve:.25}, {from:'C', to:'A', curve:.2}, {from:'k1', to:'B', dashed:true}, {from:'k2', to:'A', dashed:true}, {from:'C', to:'D', curve:.1}, {from:'D', to:'A', curve:.1}],
       steps:[
-        {note:'Three servers on the ring. “cart:9” falls between A and B, so its owner is <b>B</b> (next clockwise).', flow:[['k1', 'B', 'owner']], hl:['B']},
-        {note:'“user:7” falls between C and A → owned by <b>A</b>.', flow:[['k2', 'A', 'owner']], hl:['A']},
-        {note:'Add <b>Server D</b> between C and A. Only keys on the arc C→D move (from A to D). “cart:9” doesn’t move.', reveal:['D'], hideEdges:[['C', 'A']], hl:['D']},
-        {note:'“user:7” now lies on C→D → moves to D. Everything else stays put: ~1/N movement instead of ~all.', flow:[['k2', 'D', 'new owner']], hl:['D']}
+        {note:'Hotel 9 belongs to B, the next server clockwise.', flow:[['k1', 'B', 'owner']], hl:['B']},
+        {note:'Hotel 7 belongs to A before D joins.', flow:[['k2', 'A', 'owner']], hl:['A']},
+        {note:'D joins between C and A. Hotel 9 stays with B.', reveal:['D'], hideEdges:[['C', 'A']], hl:['D']},
+        {note:'Hotel 7 moves to D because D is now its next server.', flow:[['k2', 'D', 'new owner']], hl:['D']}
       ]},
-    deep:`<p><b>Origins:</b> Karger et al. (1997) introduced consistent hashing for distributed web caching; Akamai was founded on related work. Amazon’s Dynamo and Apache Cassandra use rings with virtual nodes (Cassandra’s <code>num_tokens</code>).</p><p><b>Alternatives:</b> <i>rendezvous (highest-random-weight) hashing</i> — score every server per key and pick the max; no ring, minimal movement, O(N) per lookup. <i>Jump consistent hash</i> (Google, 2014) — tiny and fast, but servers must be numbered sequentially (great for sharded storage, not for arbitrary node removal). <i>Maglev hashing</i> builds a lookup table with near-perfect balance for load balancers. Consistent hashing with <b>bounded loads</b> caps any server at (1+ε)× average.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Round table', 'Hotel data'], [['Card goes to next desk clockwise', 'Hotel key goes to next server.'], ['New desk takes nearby cards', 'New server takes nearby keys.'], ['One desk has several seats', 'Virtual nodes spread its positions.']])}</div><div class="callout tip"><b>Important point</b><p>A ring reduces key movement when servers change, but several positions per server help balance the load.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Change', 'Keys that move'], [['Add D', 'Keys in D’s new arc.'], ['Remove A', 'A’s keys move clockwise.'], ['Give A more virtual positions', 'A can hold a larger share.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say the app holds 1,000,000 hotel keys. Going from 4 to 5 servers with mod 4 and mod 5 moves about 800,000 keys. A ring moves about 1,000,000 ÷ 5 = 200,000.</p><p>Now a server fails. Without virtual nodes, the next server clockwise inherits all of its 20% share, so a server holding 20% jumps to 40%. With 100 virtual nodes each, the 20% spreads over 4 survivors. Each gains about 5% and goes from 20% to 25%.</p><h4>How it works inside</h4><p>The ring is a sorted list of positions. Say 5 servers × 100 virtual nodes = 500 positions. A lookup does a binary search, which needs about 9 steps, because 2⁹ = 512.</p><h4>When it goes wrong</h4><p>If the app keeps 3 copies, it walks clockwise and skips positions owned by a machine it already chose. Otherwise all 3 copies could land on one machine.</p>`
   },
-  tradeoffs:{use:[`Distributed caches and KV stores where nodes join/leave`, `Load balancers needing per-key stickiness with minimal remapping`, `Leaderless databases (Dynamo, Cassandra)`], avoid:[`Few physical nodes without virtual nodes (lumpy load)`, `Using it where a directory with explicit placement is simpler (few, large tenants)`], alt:[`Rendezvous hashing`, `Jump consistent hash`, `Logical shards + directory`]},
+  tradeoffs:{use:[`For hotel-ID routing, use a ring when servers join or leave and movement should stay limited.`, `Use virtual nodes when server positions would otherwise leave uneven hotel counts.`], avoid:[`Do not treat the ring as a fix for one hotel that receives far more bookings than others.`, `Do not move live bookings without checking the old and new owners during migration.`], alt:[`A directory can explicitly map a small set of very large hotels to servers.`]},
   real:[
-    {co:'Amazon Dynamo', tier:'confirmed', text:'Partitions data with consistent hashing and virtual nodes, replicating each key to the next N nodes on the ring.', src:'DeCandia et al., SOSP 2007'},
-    {co:'Apache Cassandra', tier:'confirmed', text:'Assigns each node multiple tokens (vnodes) on the ring via <code>num_tokens</code> to balance data and speed up rebuilds.', src:'Apache Cassandra documentation'},
-    {co:'Research', tier:'confirmed', text:'Consistent hashing was introduced for relieving hot spots in distributed web caches.', src:'Karger et al., STOC 1997'}
+    {co:'Apache Cassandra', tier:'confirmed', text:'Cassandra documents multiple ring positions per node to spread data more evenly.', src:'Apache Cassandra documentation'}
   ],
-  mistakes:[`mod-N hashing for caches that scale up and down`, `No virtual nodes`, `Forgetting replication: keys also live on the next R−1 nodes`],
-  interview:[`Explain the ring, clockwise ownership, ~1/N movement and why vnodes matter`],
-  tryit:{note:'Add and remove servers on a live ring; compare key movement with mod-N hashing.', pg:'hash-ring'},
-  sources:[`Karger et al., STOC 1997`, `DeCandia et al., SOSP 2007`, `Lamping & Veach, “A Fast, Minimal Memory, Consistent Hash Algorithm” (2014)`]
+  mistakes:[`Assuming one ring position per server always balances hotels evenly.`, `Assuming the ring solves one unusually popular hotel.`],
+  interview:[`Draw hotel 7 and hotel 9 on a ring before and after D joins.`, `Explain why virtual nodes smooth the spread.`],
+  tryit:[{quiz:[
+    {q:'When D joins the ring, which hotel keys change owner?', options:['Every hotel key', 'Only deleted hotels', 'No keys ever', 'Keys in D’s new arc'], answer:3, why:'Other arcs keep their owners.'},
+    {q:'What do virtual nodes add?', options:['Several positions per physical server', 'A new hotel room', 'A different booking price', 'One fixed URL'], answer:0, why:'Several positions smooth uneven arcs.'}
+  ]}, {note:'Add and remove hotel data servers on the ring. Compare movement with simple modulo routing.', pg:'hash-ring'}],
+  sources:[`Apache Cassandra documentation`, `Karger and others, Consistent Hashing (1997)`]
 },
 {
   id:'connection-pooling', title:'Connection pooling', minutes:7, tags:['connection pool','PgBouncer','HikariCP','max_connections'],
-  summary:'Opening database connections is expensive and databases cap them. Pools reuse a small number of connections; external poolers multiplex thousands of clients onto a few.',
-  problem:`<p>You autoscale from 20 to 120 app instances for a sale. Each has a pool of 20 connections — 2,400 connections against a PostgreSQL server configured for 100. New instances crash on startup, and the database spends its CPU juggling connections instead of running queries.</p>`,
-  intuition:`A taxi stand with 10 taxis. Passengers queue briefly and taxis are reused. Giving every passenger their own taxi (one connection per request) jams the roads — and the city (database) only has so much road.`,
+  summary:'A connection pool keeps database connections open and lends them to requests. This avoids opening a new connection each time and keeps the database from handling too many at once.',
+  problem:`<h3>A small example</h3><p>The hotel app adds servers for a holiday booking rush.</p><ul><li>120 app servers</li><li>10 database connections allowed from each</li><li>A database limit of 100 connections</li></ul><p>What happens if all 120 servers try to open their full pools?</p>`,
+  intuition:`A taxi stand lends the same taxis to many passengers across a day. It does not buy a separate taxi for every passenger. The database also needs a manageable number of reusable connections.`,
   how:{
-    steps:[`Creating a connection costs TCP + TLS + authentication + server-side setup (PostgreSQL forks a process per connection).`, `An <b>application pool</b> (HikariCP, pgx, SQLAlchemy) keeps N connections open and lends them per query or transaction.`, `Size by <b>Little’s Law</b>: busy connections = QPS × query time. 4,000 QPS × 5 ms = 20.`, `A database runs only ~a few concurrent queries per CPU core efficiently; more connections add contention, not throughput.`, `With many app instances, put an <b>external pooler</b> (PgBouncer, RDS Proxy) in front: thousands of client connections share a few dozen server connections.`],
-    diagram:{title:'Many apps, few database connections', w:760, h:260, alt:'Many app instances connect to a pooler, which multiplexes them onto a small number of database connections.',
-      nodes:[{id:'a1', type:'service', label:'App ×40', sub:'pool 10 each', x:100, y:70, w:130}, {id:'a2', type:'service', label:'App ×80', sub:'autoscaled', x:100, y:190, w:130}, {id:'pb', type:'lb', label:'PgBouncer', sub:'transaction mode', x:370, y:130, w:150}, {id:'db', type:'db', label:'PostgreSQL', sub:'30 server conns', x:640, y:130, w:150}],
+    intro:'<h3>What happens behind the scenes</h3><p>Count possible connections, then reuse a smaller set.</p>',
+    steps:[
+      {icon:'🔌', title:'Count opened connections', text:'120 app servers × 10 connections each = 1,200 possible connections. The database allows only 100.'},
+      {icon:'🔁', title:'Reuse app connections', text:'An app pool lends an open connection to a request, then takes it back when the database work finishes.'},
+      {icon:'🚪', title:'Add a shared pooler', text:'A pooler between apps and database can serve many app connections using fewer database connections.'},
+      {icon:'⏳', title:'Let excess work wait briefly', text:'Requests wait for a free connection instead of opening thousands on the database.'}
+    ],
+    diagram:{title:'Many hotel apps, fewer database connections', w:760, h:260, alt:'Hotel app instances send requests through a shared pooler that limits open database connections.',
+      nodes:[{id:'a1', type:'service', label:'App ×40', sub:'pool 10 each', x:100, y:70, w:130}, {id:'a2', type:'service', label:'App ×80', sub:'more apps', x:100, y:190, w:130}, {id:'pb', type:'lb', label:'PgBouncer', sub:'transaction mode', x:370, y:130, w:150}, {id:'db', type:'db', label:'PostgreSQL', sub:'30 server conns', x:640, y:130, w:150}],
       edges:[{from:'a1', to:'pb'}, {from:'a2', to:'pb'}, {from:'pb', to:'db'}],
       steps:[
-        {note:'1,200 client connections from 120 instances arrive at the pooler — cheap for PgBouncer to hold.', flow:[['a1', 'pb', 'conn'], ['a2', 'pb', 'conn'], ['a2', 'pb', 'conn']], parallel:true, hl:['pb']},
-        {note:'For each transaction, the pooler lends one of only <b>30</b> real server connections, returning it at COMMIT.', flow:[['pb', 'db', 'BEGIN…COMMIT']], hl:['db']},
-        {note:'The database runs ~30 queries concurrently on its cores — near peak efficiency — instead of thrashing between 1,200 processes.', flow:[['pb', 'db', 'tx'], ['pb', 'db', 'tx']], parallel:true}
+        {note:'App servers can hold 1,200 connections to the shared pooler.', flow:[['a1', 'pb', 'connection'], ['a2', 'pb', 'connection'], ['a2', 'pb', 'connection']], parallel:true, hl:['pb']},
+        {note:'The pooler lends one of 30 database connections during a booking transaction.', flow:[['pb', 'db', 'booking']], hl:['db']},
+        {note:'After work ends, that database connection can serve another request.', flow:[['pb', 'db', 'next'], ['pb', 'db', 'next']], parallel:true}
       ]},
-    deep:`<p><b>Pooling modes (PgBouncer):</b> <i>session</i> (a client keeps a server connection for its whole session — safe, little gain), <i>transaction</i> (server connection only for the duration of a transaction — big gain, but session state such as temporary tables, session-level <code>SET</code> and some prepared-statement usage needs care), <i>statement</i> (only single statements; no multi-statement transactions).</p><p><b>Sizing wisdom:</b> the HikariCP project’s guideline starts from <code>connections = core_count × 2 + effective_spindle_count</code> on the database side — often surprisingly small. Queueing in the pool is fine; queueing inside the database is worse. Set pool <i>acquire timeouts</i> so overload fails fast, and alert on wait time.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Taxi stand', 'Hotel database'], [['Passenger borrows a taxi', 'Request borrows a connection.'], ['Taxi returns for the next person', 'Connection returns to the pool.'], ['Only so many taxis are on the road', 'Database accepts a limited number of connections.']])}</div><div class="callout tip"><b>Important point</b><p>A larger pool is not free capacity. The database still has a limit on work it can run.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['If app servers grow', 'Check'], [['120 servers with 10 each', 'Could open 1,200 connections.'], ['Shared pooler uses 30 database connections', 'Requests reuse a smaller set.'], ['Wait becomes long', 'Measure queries and database capacity.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Opening a new connection means a network handshake, encryption setup and a login. Say that takes 30 ms and a query takes 5 ms. Without a pool, each request costs 35 ms instead of 5 ms, which is 7 times slower.</p><p>Many databases also pay memory for each connection. PostgreSQL runs one process per connection. Say each takes 10 MB. 1,200 connections × 10 MB = 12 GB spent before any query runs.</p><h4>When it goes wrong</h4><p>Say a booking holds its connection while it calls a payment service for 2 seconds. A pool of 30 then serves only 30 ÷ 2 = 15 bookings a second. Release the connection before the slow call.</p><p>A leaked connection, one never returned, shrinks the pool for good. After 30 leaks from a pool of 30, every request waits forever. That is why a wait limit matters.</p>`
   },
-  tradeoffs:{use:[`An app-level pool always`, `An external pooler when instance count × pool size approaches max_connections, or with serverless functions`], avoid:[`Opening a connection per request`, `Huge pools “for safety”`, `Transaction pooling with code that relies on session state`], alt:[`Read replicas to spread read connections`, `Data APIs/proxies (e.g. managed database proxies)`]},
+  tradeoffs:{use:[`For the hotel rush, reuse app connections and limit the database-side count with a pooler.`, `Measure waiting at the pool before increasing its size.`], avoid:[`Do not let 120 app servers each open ten direct database connections against a limit of 100.`, `Do not hold a connection while a guest thinks about a booking.`], alt:[`Reduce per-app pool size first if a shared pooler is unnecessary at the tested load.`]},
   real:[
-    {co:'PgBouncer', tier:'confirmed', text:'A lightweight PostgreSQL connection pooler supporting session, transaction and statement pooling modes.', src:'PgBouncer documentation'},
-    {co:'PostgreSQL', tier:'confirmed', text:'Uses a process-per-connection architecture, with <code>max_connections</code> defaulting to 100.', src:'PostgreSQL documentation'},
-    {co:'HikariCP', tier:'confirmed', text:'Its “About Pool Sizing” guide argues for small pools and gives the cores × 2 + spindles starting formula.', src:'HikariCP wiki — About Pool Sizing'}
+    {co:'PgBouncer', tier:'confirmed', text:'PgBouncer documents reusing a smaller set of PostgreSQL connections for many clients.', src:'PgBouncer documentation'}
   ],
-  mistakes:[`Pool size × instances > max_connections`, `No acquire timeout (requests hang forever)`, `Serverless functions each opening their own connections`],
-  interview:[`Size the pool with Little’s Law and mention an external pooler at scale`],
-  tryit:{note:'Size pools for your fleet and see whether you exceed the database’s limits.', mount:host => poolCalc(host)},
-  sources:[`PgBouncer docs`, `HikariCP wiki — About Pool Sizing`, `PostgreSQL docs — connections`]
+  mistakes:[`Multiplying app instances by pool size only after the database refuses connections.`, `Increasing pool size when slow queries are the real limit.`],
+  interview:[`Calculate 120 × 10 before choosing a pool setting.`, `Compare open connections with actually busy queries.`],
+  tryit:[{quiz:[
+    {q:'How many connections can 120 app servers open with pools of 10?', options:['100', '1,200', '120', '10'], answer:1, why:'120 × 10 = 1,200 possible connections.'},
+    {q:'What does a shared pooler reuse?', options:['Guest passwords', 'Room prices', 'Database connections', 'Hotel photos'], answer:2, why:'It lends a smaller set of database connections to many app requests.'}
+  ]}, {note:'Set app instances to 120 and pool size to 10. Compare open and busy connections.', mount:host => poolCalc(host)}],
+  sources:[`PgBouncer documentation`]
 },
 {
   id:'oltp-olap', title:'OLTP vs OLAP: warehouses, lakes, lakehouses, ETL vs ELT', minutes:10, tags:['OLTP','OLAP','column store','data warehouse','data lake','lakehouse','ETL','ELT'],
-  summary:'OLTP serves many small, fast transactions on current data. OLAP scans huge histories for aggregates — with columnar storage in warehouses, lakes and lakehouses.',
-  problem:`<p>The finance team runs “revenue by city by month for 3 years” on the production orders database at 11 AM. It scans 2 billion rows, saturates disk I/O, and checkout latency triples. Analytics and transactions have opposite needs and should not share a database.</p>`,
-  intuition:`OLTP is the shop counter: many quick sales, one at a time, always current. OLAP is the accountant at the year-end: reads every receipt to compute totals, slowly and thoroughly. You don’t let the accountant block the counter — you give them photocopies in a back office.`,
+  summary:'OLTP handles short current-data changes such as one hotel booking. OLAP scans many past bookings for reports. Separate stores let large reports avoid slowing guest checkout.',
+  problem:`<h3>A small example</h3><p>A hotel finance team asks for monthly revenue by city during a busy booking hour.</p><ul><li>Guests are making new bookings.</li><li>The report scans years of old bookings.</li><li>Both jobs use the same database today.</li></ul><p>How can the team get the report without delaying a guest’s booking?</p>`,
+  intuition:`The front desk serves one guest at a time. An accountant studies years of receipts in a back office. Give the accountant copies so the desk keeps working.`,
   how:{
-    steps:[`<b>OLTP</b>: point reads/writes, short transactions, normalized row stores (PostgreSQL, MySQL).`, `<b>OLAP</b>: large scans and aggregates over history; <b>column stores</b> read only needed columns, compress well and vectorise (BigQuery, Snowflake, Redshift, ClickHouse).`, `<b>Data warehouse</b>: curated, structured, schema-on-write tables for BI.`, `<b>Data lake</b>: cheap object storage holding raw files in open formats (Parquet, JSON); schema-on-read.`, `<b>Lakehouse</b>: table formats (Delta Lake, Apache Iceberg, Apache Hudi) add ACID tables, schema evolution and time travel on top of the lake.`, `<b>ETL</b>: transform before loading. <b>ELT</b>: load raw into the warehouse, transform with SQL there (dbt) — popular now that warehouses are elastic.`],
-    diagram:{title:'Keeping analytics off the OLTP path', w:800, h:260, alt:'OLTP databases stream changes into a data lake and warehouse where BI tools query without touching production.',
-      nodes:[{id:'app', type:'service', label:'Checkout svc', x:90, y:80}, {id:'oltp', type:'db', label:'OLTP Postgres', x:280, y:80, w:140}, {id:'cdc', type:'queue', label:'CDC / batch extract', x:300, y:200, w:160}, {id:'lake', type:'db', label:'Data lake', sub:'Parquet / Iceberg', x:520, y:200, w:140}, {id:'wh', type:'db', label:'Warehouse', sub:'columnar', x:700, y:120, w:130}, {id:'bi', type:'client', label:'BI dashboards', x:700, y:230, w:130}],
-      edges:[{from:'app', to:'oltp'}, {from:'oltp', to:'cdc'}, {from:'cdc', to:'lake'}, {from:'lake', to:'wh'}, {from:'wh', to:'bi'}],
+    intro:'<h3>What happens behind the scenes</h3><p>Separate one guest booking from a report over many bookings.</p>',
+    steps:[
+      {icon:'🛎️', title:'OLTP serves one booking', text:'Online transaction processing reads and changes a few current rows quickly.'},
+      {icon:'📋', title:'Copy data for reports', text:'A separate path moves booking facts to a reporting store. You will learn change pipelines in Module 7.'},
+      {icon:'📊', title:'OLAP scans history', text:'Online analytical processing groups many old bookings by city and month.'},
+      {icon:'🏬', title:'Choose a report home', text:'A data warehouse holds prepared tables, while a lake holds raw files. A lakehouse adds managed tables on those files.'},
+      {icon:'🔄', title:'Choose the work order', text:'ETL cleans before loading. ELT loads first and cleans in the reporting store.'}
+    ],
+    diagram:{title:'Hotel reports away from booking checkout', w:800, h:260, alt:'The booking database serves guests. Copies move to a lake and warehouse where finance reads monthly totals.',
+      nodes:[{id:'app', type:'service', label:'Booking app', x:90, y:80}, {id:'oltp', type:'db', label:'Booking DB', x:280, y:80, w:140}, {id:'copy', type:'queue', label:'Copy step', x:300, y:200, w:160}, {id:'lake', type:'db', label:'Data lake', sub:'raw bookings', x:520, y:200, w:140}, {id:'wh', type:'db', label:'Warehouse', sub:'report tables', x:700, y:120, w:130}, {id:'bi', type:'client', label:'Finance report', x:700, y:230, w:130}],
+      edges:[{from:'app', to:'oltp'}, {from:'oltp', to:'copy'}, {from:'copy', to:'lake'}, {from:'lake', to:'wh'}, {from:'wh', to:'bi'}],
       steps:[
-        {note:'Checkout writes small transactions to the <b>OLTP</b> database. Nothing else is allowed to scan it.', flow:[['app', 'oltp', 'INSERT order']], hl:['oltp']},
-        {note:'Changes are extracted continuously (CDC) or nightly into the <b>lake</b> as columnar files.', flow:[['oltp', 'cdc', 'changes'], ['cdc', 'lake', 'Parquet']], hl:['lake']},
-        {note:'ELT: raw data loads into the <b>warehouse</b>; SQL models build clean fact and dimension tables there.', flow:[['lake', 'wh', 'load + transform']], hl:['wh']},
-        {note:'Analysts query the warehouse — scanning billions of rows without touching checkout.', flow:[['bi', 'wh', 'SUM by city'], ['wh', 'bi']], hl:['bi']}
+        {note:'A guest booking writes a few current rows.', flow:[['app', 'oltp', 'save booking']], hl:['oltp']},
+        {note:'A separate step copies booking facts to raw files.', flow:[['oltp', 'copy', 'copy'], ['copy', 'lake', 'files']], hl:['lake']},
+        {note:'Prepared report tables are built from those files.', flow:[['lake', 'wh', 'prepare']], hl:['wh']},
+        {note:'Finance reads monthly city totals without scanning the booking database.', flow:[['bi', 'wh', 'city totals'], ['wh', 'bi']], hl:['bi']}
       ]},
-    deep:`<p><b>Why columnar wins for analytics:</b> a query touching 3 of 100 columns reads ~3% of the bytes; similar values in a column compress extremely well (run-length, dictionary encoding); min/max statistics per block let engines skip data; operations run on vectors of values. Google’s Dremel (2010) showed interactive SQL over trillions of rows with nested columnar storage — the basis of BigQuery.</p><p><b>Modelling:</b> star schemas (fact tables of events with foreign keys to dimension tables) remain the standard for BI. <b>HTAP</b> systems try to serve both workloads, typically by keeping a columnar replica of the row store. <b>Freshness</b> is a design choice: nightly batch, micro-batch, or streaming (Module 7).</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Hotel work', 'Data work'], [['Front desk confirms one stay', 'OLTP changes a few rows.'], ['Accountant totals a year', 'OLAP scans many rows.'], ['Back office holds receipts', 'Separate reporting store.']])}</div><div class="callout tip"><b>Important point</b><p>Do not let a large history scan delay current bookings.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Need', 'Store'], [['Confirm a room now', 'Booking database.'], ['Monthly revenue by city', 'Warehouse or lakehouse report tables.'], ['Keep raw booking files', 'Data lake.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say a booking row has 20 fields of 8 bytes each. That is 20 × 8 = 160 bytes. For 100,000,000 bookings, a row store reads 100,000,000 × 160 B = 16 GB to sum amounts by month. A column store reads just amount and date, 16 bytes per booking, which is 1.6 GB. That is 10 times less.</p><p>Compression helps more. A city column has only 100 different names. It can be stored as a 1-byte code, because 1 byte holds 256 values, instead of a 20-byte name.</p><h4>When it goes wrong</h4><p>Say the nightly copy runs at 2 AM. A finance report opened at 5 PM shows data 15 hours old.</p><p>ELT keeps the raw rows in the warehouse. If a cleaning rule turns out wrong, the team re-runs the cleaning without pulling data from the booking database again.</p>`
   },
-  tradeoffs:{use:[`<b>Warehouse</b> for governed BI on structured data`, `<b>Lake</b> for cheap storage of raw/semi-structured data and ML`, `<b>Lakehouse</b> when you want both on open formats`, `<b>ELT</b> with an elastic warehouse; <b>ETL</b> when you must clean/redact before loading`], avoid:[`Analytics queries on the production OLTP primary`, `A “data swamp”: a lake with no catalogue or ownership`], alt:[`A read replica for light internal reporting`, `ClickHouse/Druid/Pinot for real-time user-facing analytics`]},
+  tradeoffs:{use:[`For hotel finance, send history scans to a separate reporting store.`, `Use the booking database for small current booking changes.`], avoid:[`Do not run a years-long booking scan on the database serving guests at peak time.`, `Do not promise fresh-to-the-second reports from a nightly copy.`], alt:[`For a small report, run it outside peak hours while measuring its effect on bookings.`]},
   real:[
-    {co:'Google BigQuery (Dremel)', tier:'confirmed', text:'Dremel introduced columnar storage of nested data and tree-based query execution for interactive analysis at massive scale; it underpins BigQuery.', src:'Melnik et al., “Dremel”, VLDB 2010'},
-    {co:'Snowflake', tier:'confirmed', text:'Separates storage (in cloud object stores) from elastic compute warehouses, so analytics scale independently.', src:'Dageville et al., “The Snowflake Elastic Data Warehouse”, SIGMOD 2016'},
-    {co:'Databricks', tier:'confirmed', text:'Proposed the lakehouse architecture: ACID table formats and warehouse-style performance directly on open data-lake files.', src:'Armbrust et al., “Lakehouse”, CIDR 2021'}
+    {co:'Google', tier:'confirmed', text:'Google’s Dremel paper describes reading selected columns for large analytical questions.', src:'Melnik and others, Dremel (2010)'}
   ],
-  mistakes:[`Reporting queries on the OLTP primary`, `No defined freshness SLA for analytics data`, `Copying PII into the lake without governance`],
-  interview:[`When analytics appear in requirements, add a pipeline to a separate store`, `Explain why columnar storage is faster for aggregates`],
-  tryit:{note:'Compare bytes scanned by a row store and a column store for a monthly revenue query.', mount:host => rowColDemo(host)},
-  sources:[`Melnik et al., Dremel, VLDB 2010`, `Dageville et al., SIGMOD 2016`, `Armbrust et al., CIDR 2021`, `Kimball & Ross, “The Data Warehouse Toolkit”`]
+  mistakes:[`Running the monthly report on the booking database during peak reservations.`, `Using an old finance report without saying when it was copied.`],
+  interview:[`Separate the guest booking path from the city revenue report.`, `Explain why amount and date columns can answer the report.`],
+  tryit:[{quiz:[
+    {q:'Which job belongs on the OLTP booking database?', options:['Scan years of revenue', 'Build every city chart', 'Read all old photos', 'Confirm one room booking'], answer:3, why:'OLTP handles small current transactions.'},
+    {q:'Why can a column store help a monthly revenue report?', options:['It reads only needed fields such as date and amount', 'It deletes bookings', 'It makes every write free', 'It needs no data'], answer:0, why:'The report can avoid reading unrelated booking fields.'}
+  ]}, {note:'Compare bytes read for a hotel revenue report in a row store and a column store.', mount:host => rowColDemo(host)}],
+  sources:[`Melnik and others, Dremel (2010)`]
 },
 {
   id:'storage-types', title:'Object, block and file storage; GFS/HDFS; backups and tiering', minutes:10, tags:['object storage','block storage','file storage','GFS','HDFS','backups','tiered storage'],
-  summary:'Block for databases, file for shared POSIX access, object for everything big and cheap. Durability needs replication and backups; cost needs tiering.',
-  problem:`<p>Your app stores user uploads on the app server’s local disk. Add a second server and half the images 404. Then the disk fails and three months of uploads vanish — the “backup” was a nightly copy to the same disk array. Where data lives, and how it is protected, are design decisions.</p>`,
-  intuition:`Block storage is a raw hard drive you format yourself (a plot of land). File storage is a shared office filing cabinet with folders (a shared building). Object storage is a warehouse with numbered boxes: you hand over a box and get a claim ticket (a key/URL) — enormous, cheap, durable, but you can’t edit the middle of a box, only replace it.`,
+  summary:'Block storage gives a machine disk space for a database. File storage shares folders. Object storage keeps named files such as hotel photos. Backups protect against loss, and older files can move to cheaper tiers.',
+  problem:`<h3>A small example</h3><p>Hotels upload room photos to the booking app. The first app server saves them on its own disk.</p><ul><li>A second app server cannot see those photos.</li><li>One disk failure could remove originals.</li><li>Old photos are rarely opened.</li></ul><p>Where should the photos live, and how should the app protect them?</p>`,
+  intuition:`A private drawer belongs to one worker. A shared cabinet serves an office. A warehouse stores named boxes for many branches. You still need a separate backup if someone throws away a box.`,
   how:{
-    steps:[`<b>Block</b> (EBS, Persistent Disk, SAN): fixed-size blocks, attached to one machine; low latency; for databases and boot volumes.`, `<b>File</b> (NFS, EFS, SMB): a shared POSIX filesystem many machines mount; convenient, harder to scale.`, `<b>Object</b> (S3, GCS, Azure Blob): flat key → object + metadata over HTTP; virtually unlimited, highly durable, immutable objects; ideal for media, backups, data lakes.`, `<b>Distributed file systems</b> (GFS → HDFS): big files split into large chunks/blocks replicated across commodity machines, coordinated by a metadata master.`, `<b>Backups</b>: the 3-2-1 rule — 3 copies, 2 media types, 1 off-site; test restores; replication is <i>not</i> a backup (it copies deletions and corruption too).`, `<b>Tiering</b>: move data to colder, cheaper classes as it ages (lifecycle policies).`],
-    diagram:{title:'Uploads done right', w:760, h:260, alt:'Clients upload directly to object storage with a pre-signed URL; a CDN serves reads; lifecycle rules tier old objects; backups go cross-region.',
-      nodes:[{id:'c', type:'client', label:'Mobile app', x:80, y:130}, {id:'api', type:'service', label:'Upload API', x:260, y:50}, {id:'obj', type:'db', label:'Object storage', sub:'bucket', x:480, y:130, w:150}, {id:'cdn', type:'cdn', label:'CDN', x:260, y:220}, {id:'cold', type:'db', label:'Archive tier', x:690, y:60, w:130}, {id:'bk', type:'db', label:'Other-region copy', x:690, y:210, w:150}],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow one room photo from upload to an old archive.</p>',
+    steps:[
+      {icon:'💾', title:'Keep database disks', text:'Block storage acts like a disk for the hotel database machine and its small random reads.'},
+      {icon:'📁', title:'Share folders when needed', text:'File storage lets several machines use familiar folders and file paths.'},
+      {icon:'🖼️', title:'Store photos as objects', text:'Object storage keeps each room photo under a key that any app server can request.'},
+      {icon:'🛡️', title:'Back up separately', text:'A copy in another place helps recover after deletion or corruption, but the app must test a restore.'},
+      {icon:'❄️', title:'Move old photos', text:'Older photos can move to a cheaper storage tier when slower access is acceptable.'}
+    ],
+    diagram:{title:'Hotel photos shared and protected', w:760, h:260, alt:'A hotel app gets an upload address. A photo goes to object storage, can be served through a CDN, and older copies move to archive.',
+      nodes:[{id:'c', type:'client', label:'Hotel app', x:80, y:130}, {id:'api', type:'service', label:'Upload API', x:260, y:50}, {id:'obj', type:'db', label:'Photo objects', sub:'shared', x:480, y:130, w:150}, {id:'cdn', type:'cdn', label:'CDN', x:260, y:220}, {id:'cold', type:'db', label:'Older tier', x:690, y:60, w:130}, {id:'bk', type:'db', label:'Separate backup', x:690, y:210, w:150}],
       edges:[{from:'c', to:'api'}, {from:'c', to:'obj'}, {from:'cdn', to:'obj'}, {from:'c', to:'cdn'}, {from:'obj', to:'cold', dashed:true}, {from:'obj', to:'bk', dashed:true}],
       steps:[
-        {note:'The app asks the API for a <b>pre-signed upload URL</b> (auth + size/type limits) — the API never streams the bytes itself.', flow:[['c', 'api', 'POST /uploads'], ['api', 'c', 'signed URL']], hl:['api']},
-        {note:'The phone uploads directly to <b>object storage</b>.', flow:[['c', 'obj', 'PUT photo.jpg']], hl:['obj']},
-        {note:'Reads come through the <b>CDN</b>, which fetches from the bucket on a miss.', flow:[['c', 'cdn', 'GET'], ['cdn', 'obj', 'miss'], ['obj', 'cdn'], ['cdn', 'c']], hl:['cdn']},
-        {note:'Lifecycle rules move objects untouched for 90 days to an <b>archive tier</b>; replication/backups keep a copy in <b>another region</b>.', flow:[['obj', 'cold', 'lifecycle'], ['obj', 'bk', 'replicate']], parallel:true}
+        {note:'The app gets a short-lived upload address for one hotel photo.', flow:[['c', 'api', 'upload?'], ['api', 'c', 'address']], hl:['api']},
+        {note:'The hotel uploads the photo to shared object storage.', flow:[['c', 'obj', 'room photo']], hl:['obj']},
+        {note:'A guest can receive a public photo through the CDN.', flow:[['c', 'cdn', 'photo?'], ['cdn', 'obj', 'fetch'], ['obj', 'cdn'], ['cdn', 'c']], hl:['cdn']},
+        {note:'Older photos can move to a cheaper tier, while a separate backup supports recovery.', flow:[['obj', 'cold', 'move old'], ['obj', 'bk', 'backup']], parallel:true}
       ]},
-    deep:`<p><b>GFS (2003):</b> files split into 64 MB chunks, each replicated (3× by default) on chunkservers; a single master holds metadata in memory; designed for large sequential reads and appends on failure-prone commodity hardware. HDFS followed the same model (default block size 128 MB). Single-master metadata later became a scaling limit (GFS’s successor Colossus distributes it).</p><p><b>Durability engineering:</b> object stores reach very high durability with replication across zones and erasure coding (e.g. Reed-Solomon: k data + m parity fragments survive m losses at far less overhead than 3× replication), plus continuous integrity checking. <b>RPO/RTO</b> (Module 9) drive backup frequency and restore design; point-in-time recovery combines base backups with WAL archives. Immutable/object-lock backups defend against ransomware and accidental deletion.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Office storage', 'Hotel app storage'], [['Private disk drawer', 'Block storage for one database machine.'], ['Shared file cabinet', 'File storage for shared paths.'], ['Warehouse of numbered boxes', 'Object storage for room photos.']])}</div><div class="callout tip"><b>Important point</b><p>A second live copy is not enough for recovery if a mistaken deletion reaches both copies.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Hotel data', 'Useful home'], [['Booking database', 'Block storage under the database.'], ['Room photos', 'Object storage with a separate backup.'], ['Old photo files', 'A cheaper tier after access slows.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say the app holds 1,000,000 room photos of 2 MB each. That is 2,000,000 MB, or 2 TB. Say a hot tier costs ₹2 per GB each month and a cold tier costs ₹0.5. All hot is 2,000 × 2 = ₹4,000. If 1,800 GB is cold, it is 1,800 × 0.5 + 200 × 2 = ₹1,300. That saves ₹2,700 a month.</p><p>Restoring takes time. At 100 MB/s, 2,000,000 MB ÷ 100 = 20,000 seconds, about 5.6 hours.</p><h4>How it works inside</h4><p>HDFS splits files into blocks, 128 MB each by default. A 1 GB file becomes 8 blocks. With 3 copies of each, that is 24 stored blocks and 3 GB of disk.</p><h4>When it goes wrong</h4><p>Say backups run nightly at 2 AM and the disk dies at 1 AM. You lose 23 hours of changes.</p>`
   },
-  tradeoffs:{use:[`<b>Object</b> for media, documents, backups, logs, data lakes`, `<b>Block</b> for databases and low-latency random I/O`, `<b>File</b> for legacy apps needing shared POSIX semantics`], avoid:[`User uploads on local app-server disks`, `Treating replicas as backups`, `Backups never test-restored`], alt:[`Managed databases with point-in-time recovery`, `Erasure-coded storage for cost-efficient durability`]},
+  tradeoffs:{use:[`For hotel room photos, object storage lets several app servers reach the same files.`, `Keep an independently recoverable copy and test restoring a deleted photo.`], avoid:[`Do not keep room photos only on one app server disk.`, `Do not call a live synchronized copy a complete backup.`], alt:[`Use shared file storage if an older hotel tool truly needs ordinary folders and paths.`]},
   real:[
-    {co:'Google File System', tier:'confirmed', text:'Described a distributed file system with 64 MB chunks replicated across commodity servers and a single metadata master.', src:'Ghemawat, Gobioff & Leung, “The Google File System”, SOSP 2003'},
-    {co:'Amazon S3', tier:'confirmed', text:'Designed for 99.999999999% (11 nines) durability by storing data redundantly across multiple devices and facilities, with lifecycle rules to transition objects between storage classes.', src:'Amazon S3 documentation'},
-    {co:'GitLab', tier:'confirmed', text:'In January 2017 an accidental deletion of a production database directory was compounded by backup procedures that were not working, losing about six hours of data — a widely cited lesson in testing restores.', src:'GitLab, “Postmortem of database outage of January 31” (2017)'}
+    {co:'Google File System', tier:'confirmed', text:'The GFS paper describes splitting large files into chunks across storage machines.', src:'Ghemawat and others, The Google File System (2003)'},
+    {co:'GitLab', tier:'confirmed', text:'GitLab’s 2017 incident report showed how an accidental deletion became worse when backups could not restore all data.', src:'GitLab database outage postmortem (2017)'}
   ],
-  mistakes:[`Backups that have never been restored`, `Replication mistaken for backup`, `Public buckets by accident`, `No lifecycle policy (paying hot prices for cold data)`],
-  interview:[`Uploads → pre-signed URLs to object storage + CDN`, `State RPO/RTO and how backups meet them`],
-  tryit:{note:'Estimate how much lifecycle tiering saves on a large object store.', mount:host => tierCalc(host)},
-  sources:[`Ghemawat et al., GFS, SOSP 2003`, `Shvachko et al., “The Hadoop Distributed File System” (2010)`, `GitLab postmortem (2017)`, `Amazon S3 documentation`]
+  mistakes:[`Keeping every room photo only on an app server disk.`, `Never trying a restore from the hotel photo backup.`],
+  interview:[`Choose block, file, or object storage for each hotel item.`, `Explain why a second live copy does not replace a tested backup.`],
+  tryit:[{quiz:[
+    {q:'Where should hotel room photos live so several app servers can reach them?', options:['A database connection pool', 'Shared object storage', 'Only one app server disk', 'A browser tab only'], answer:1, why:'Object storage gives the app a shared file home.'},
+    {q:'What proves a hotel photo backup can help after deletion?', options:['A longer file name', 'A faster CDN', 'A successful restore test', 'A second live copy only'], answer:2, why:'A backup is useful when the app can recover the lost photo.'}
+  ]}, {note:'Move older hotel photo data between storage tiers and compare the estimated cost and restore delay.', mount:host => tierCalc(host)}],
+  sources:[`Ghemawat and others, The Google File System (2003)`, `GitLab database outage postmortem (2017)`]
 }
 ];
 
 SDA.register({
   kind:'module', id:'databases', order:5, level:'intermediate', icon:'🗄️', title:'Databases & Storage',
-  summary:'Database families and how to choose, ACID vs BASE, indexes, B-trees vs LSM-trees, normalization, isolation levels and MVCC, locking, replication, sharding, consistent hashing, connection pooling, OLTP vs OLAP, and object/block/file storage with backups.',
-  outcomes:['Pick a database family from access patterns', 'Design indexes and explain query plans', 'Reason about isolation anomalies and concurrency control', 'Design replication with clear failover and read-consistency behaviour', 'Choose a shard key, plan resharding and separate OLTP from analytics'],
+  summary:'Use a hotel booking app to choose data shapes, protect concurrent bookings, and grow storage. Learn how indexes, copies, shards, reports, and backups change the design.',
+  outcomes:['Choose a database family from hotel reads and writes', 'Explain an index and two storage engine paths', 'Protect the last room from conflicting bookings', 'Reason about lagging copies and hotel-ID shards', 'Separate bookings, reports, photos, and recoverable backups'],
   lessons,
   quiz:[
-    {q:'Composite index (city, category, price). Which query can use it to seek?', options:['WHERE category = ?', 'WHERE price BETWEEN ? AND ?', 'WHERE city = ? AND price > ?', 'WHERE category = ? AND price = ?'], answer:2, why:'Leftmost prefix: city is used for the seek; price is filtered within that range (category is skipped, so price can’t narrow the seek fully).'},
-    {q:'Write-heavy GPS ingestion at 200K writes/s. Which storage engine family fits best?', options:['B-tree', 'LSM-tree', 'Hash index in RAM only', 'A spreadsheet'], answer:1, why:'LSM turns random writes into sequential flushes and background merges.'},
-    {q:'Two doctors each check “someone else is on call” and both go off call. This anomaly is…', options:['Dirty read', 'Phantom', 'Write skew', 'Lost update'], answer:2, why:'Overlapping reads, disjoint writes — only Serializable prevents it.'},
-    {q:'PostgreSQL’s default isolation level is…', options:['Read Uncommitted', 'Read Committed', 'Repeatable Read', 'Serializable'], answer:1, why:'MySQL InnoDB defaults to Repeatable Read; PostgreSQL to Read Committed.'},
-    {q:'A user updates their profile then immediately sees the old one. Most likely cause?', options:['Cache stampede', 'Reading from a lagging async replica', 'Deadlock', 'Wrong index'], answer:1, why:'A read-your-writes violation from replication lag.'},
-    {q:'With mod-N hashing, scaling a cache from 4 to 5 nodes remaps about…', options:['20% of keys', '50%', '80%', '100%'], answer:2, why:'Only ~1 in 5 keys keeps the same node; consistent hashing would move ~20%.'},
-    {q:'What do virtual nodes improve in consistent hashing?', options:['Encryption', 'Load balance across servers and spread of a failed node’s keys', 'Write durability', 'Query planning'], answer:1, why:'Many positions per server average out arc sizes.'},
-    {q:'120 instances × pool of 20 against max_connections = 100. Best fix?', options:['Raise pool size', 'Add an external pooler (e.g. PgBouncer) and shrink per-instance pools', 'Remove indexes', 'Use UDP'], answer:1, why:'Multiplex many client connections onto a few server connections.'},
-    {q:'Why are column stores faster for SUM over one column of a wide table?', options:['They have no indexes', 'They read only the needed columns, compress them well and skip blocks', 'They use B-trees', 'They are in-memory only'], answer:1, why:'Bytes read drop by orders of magnitude.'},
-    {q:'Which is NOT a backup?', options:['A daily snapshot copied to another region', 'An async replica', 'An immutable archive with versioning', 'WAL archive + base backup'], answer:1, why:'Replicas faithfully copy deletions and corruption.'},
-    {q:'Best way to sell the last T-shirt exactly once?', options:['Read qty in app, then UPDATE qty = qty_read − 1', '<code>UPDATE … SET qty = qty − 1 WHERE sku = ? AND qty &gt; 0</code> and check rows affected', 'Cache the quantity', 'Eventual consistency'], answer:1, why:'An atomic conditional update needs no explicit lock and can’t oversell.'},
-    {type:'scenario', q:'Your PostgreSQL primary is at 85% CPU and 4 TB, growing fast. Outline a plan before and including sharding.', answer:'<ol><li><b>Measure:</b> top queries by total time (pg_stat_statements); fix missing indexes and N+1s.</li><li><b>Offload reads:</b> cache hot reads; route read-only queries to replicas with read-your-writes handling.</li><li><b>Move analytics</b> off the primary (CDC → warehouse).</li><li><b>Archive cold data</b> (partition by time; detach old partitions to cheaper storage).</li><li><b>Scale up</b> while it’s cheap and simple.</li><li><b>Then shard</b> by the key most queries include (user_id or tenant_id), using many logical shards on few hosts (or Citus/Vitess-style middleware); migrate per tenant with dual-writes/CDC, backfill, shadow reads, and gradual cutover.</li></ol>'},
-    {type:'scenario', q:'Design replication for a payments ledger in one region with a strict “never lose an acknowledged write” rule.', answer:'<ul><li>Leader plus followers across availability zones with <b>synchronous (or semi-sync, ≥1) replication</b> so a commit is on two zones before acknowledging (RPO = 0 for single-zone failure).</li><li><b>Automated failover with fencing</b> (Patroni/managed service); promote only fully caught-up replicas.</li><li>Reads that must be current go to the leader; reporting goes to async replicas or the warehouse.</li><li>Idempotency keys on every write so client retries after a failover are safe.</li><li>Point-in-time recovery backups (base + WAL archive) to another region; regularly tested restores; consider a consensus-replicated database if multi-region RPO = 0 is needed.</li></ul>'}
+    {q:'Which family fits hotel bookings that link guests, rooms, and dates?', options:['Only a photo store', 'Only a text file', 'A browser tab', 'A relational SQL database'], answer:3, why:'Bookings connect related records and need clear rules.'},
+    {q:'What should happen if a ₹500 transfer crashes before commit?', options:['Only guest debit remains', 'Neither wallet change remains', 'Only hotel credit remains', 'Both double'], answer:1, why:'Atomicity keeps the changes together.'},
+    {q:'Which index order fits city, room type, then a price range?', options:['Price, city, type', 'Only photo URL', 'City, type, price', 'No index can help'], answer:2, why:'Equal filters lead before the price range.'},
+    {q:'Where does an LSM engine first hold recent sorted writes?', options:['Only a CDN', 'A room photo', 'A browser cookie', 'A memtable'], answer:3, why:'The memtable holds recent writes before sorted disk files are created.'},
+    {q:'Why keep the paid room price on an old booking receipt?', options:['It is a historical fact', 'It makes today’s price fixed', 'It removes the hotel', 'It avoids every index'], answer:0, why:'The receipt records the amount agreed at booking time.'},
+    {q:'Why can both night managers leave under a snapshot example?', options:['They use one laptop', 'They update different rows after reading the same old view', 'There are three managers', 'The hotel has no room IDs'], answer:1, why:'Their combined changes break the rule without touching the same row.'},
+    {q:'What tells editor B that room version 12 is old after A saved version 13?', options:['A new photo', 'A second city', 'An optimistic version check', 'A longer TTL'], answer:2, why:'The outdated update matches no current version.'},
+    {q:'Why can a guest refresh a changed booking and see old dates?', options:['The guest changed hotels', 'Every database is empty', 'The browser changed time', 'A follower has not copied the write yet'], answer:3, why:'A follower can lag behind the leader.'},
+    {q:'Which shard key can keep one hotel’s rooms together?', options:['Random page title', 'Hotel ID', 'Current second', 'Phone color'], answer:1, why:'Hotel ID keeps that hotel’s booking data local.'},
+    {q:'When server D joins a balanced hash ring, which keys move?', options:['Every hotel key', 'Keys in D’s new arc', 'Only guest passwords', 'No keys ever'], answer:1, why:'Other arcs keep their owners.'},
+    {q:'How many connections can 120 app servers open with pools of 10?', options:['10', '120', '1,200', '100'], answer:2, why:'120 × 10 = 1,200 possible connections.'},
+    {q:'Where should finance scan years of hotel revenue?', options:['On the booking primary at peak', 'On a buyer phone', 'Inside every booking transaction', 'In a separate reporting store'], answer:3, why:'Large scans should not delay current bookings.'},
+    {q:'What shows a hotel photo backup can recover a deleted file?', options:['A shorter photo name', 'A faster index', 'A successful restore test', 'A second live copy only'], answer:2, why:'A backup must be usable when an original is lost.'},
+    {type:'scenario', q:'Two guests try for the last room at once. What must the hotel app do?', answer:'<ol><li>Keep room availability and the booking decision together in one safe database operation.</li><li>Use a short lock or a conditional update that succeeds for only one guest.</li><li>Confirm the winner and clearly reject the other request.</li><li>Do not decide from an old follower read alone.</li></ol>'},
+    {type:'scenario', q:'The hotel app needs monthly city revenue and room photos. Where should each live?', answer:'<p>Keep current bookings in the transaction database. Copy booking facts to a separate reporting store for monthly totals. Put room photos in shared object storage and keep a tested backup that can restore a deleted photo.</p>'}
   ],
   cheatsheet:[
-    {h:'🧭 Choosing', items:['Relational by default; specialise per access pattern', 'KV · document · wide-column · graph · TS · search · vector', 'One system of record; others derived via CDC']},
-    {h:'🔒 ACID & isolation', items:['A atomic · C invariants · I isolation · D durable (WAL)', 'RC: no dirty reads (Postgres default)', 'RR/SI: stable snapshot (MySQL default)', 'Serializable: stops write skew (retry aborts)', 'MVCC: readers don’t block writers']},
-    {h:'📇 Indexes & engines', items:['B-tree: equality, range, order', 'Composite: leftmost prefix; range stops it', 'Covering → index-only scan', 'LSM: memtable → SSTables → compaction', 'Write/read/space amplification']},
-    {h:'🔁 Replication', items:['Leader-follower: sync / semi-sync / async', 'Lag → read-your-writes, monotonic reads', 'Failover needs fencing (split brain)', 'Multi-leader → conflicts', 'Leaderless: R + W > N']},
-    {h:'🧩 Sharding', items:['Hash (even) · range (scans) · directory · geo', 'Shard key = in most queries, spreads load', 'Many logical shards on few hosts', 'Consistent hashing + vnodes: ~1/N moves', 'Hot shards → split/salt/isolate']},
-    {h:'🏗️ Ops & analytics', items:['Pool size = QPS × query time; use PgBouncer at scale', 'OLTP rows vs OLAP columns', 'Warehouse · lake · lakehouse; ELT with dbt', 'Object for blobs; block for DBs', '3-2-1 backups; test restores; tier cold data']}
+    {h:'🧭 Choose data shape', items:['List the hotel app’s reads and writes first.', 'Related bookings fit SQL tables.', 'One-key and whole-document reads may suit other shapes.', 'Name which store holds the original booking.']},
+    {h:'🔒 Keep booking rules', items:['ACID groups important changes into one transaction.', 'A view count may catch up later.', 'Serializable can stop unsafe overlapping transactions.', 'A version check catches an old room edit.', 'A short lock or conditional update protects the last room.']},
+    {h:'📇 Find and store rows', items:['An index helps reads but adds write and storage cost.', 'A composite index starts with its first column.', 'A B-tree keeps sorted pages ready for reads.', 'An LSM engine accepts writes in memory, then merges sorted files.']},
+    {h:'🔁 Grow hotel data', items:['A follower can show old booking dates until it catches up.', 'Shards split hotels across machines by a key.', 'Hotel ID can keep one hotel’s rooms together.', 'A hash ring limits movement when servers join.', 'A pooler reuses fewer database connections.']},
+    {h:'📊 Keep reports separate', items:['OLTP serves one current booking.', 'OLAP scans booking history for reports.', 'A warehouse holds prepared report tables.', 'A lake holds raw files.', 'ETL cleans before loading. ELT loads before cleaning.']},
+    {h:'🖼️ Protect files', items:['Block storage acts as a disk for a database machine.', 'File storage offers shared folders.', 'Object storage holds named room photos.', 'A live synchronized copy does not replace a tested backup.', 'Move old photos to cheaper tiers when access slows.']}
   ],
   glossary:[
-    {term:'ACID', def:'Atomicity, Consistency, Isolation, Durability — the guarantees of database transactions.'},
-    {term:'BASE', def:'Basically Available, Soft state, Eventually consistent — an approach trading strict guarantees for availability and scale.'},
-    {term:'Eventual consistency', aka:['eventually consistent'], def:'If no new updates occur, all replicas converge to the same value.'},
-    {term:'Write-ahead log', aka:['WAL', 'redo log'], def:'An append-only log of changes written before data pages, enabling crash recovery and replication.'},
-    {term:'Transaction', aka:['transactions'], def:'A group of operations executed as one all-or-nothing unit.'},
-    {term:'Isolation level', aka:['isolation levels'], def:'The degree to which concurrent transactions are shielded from each other’s effects.'},
-    {term:'Dirty read', def:'Reading data written by a transaction that has not yet committed.'},
-    {term:'Non-repeatable read', def:'Reading the same row twice in a transaction and getting different values.'},
-    {term:'Phantom read', aka:['phantom'], def:'A repeated range query returning rows inserted by another transaction meanwhile.'},
-    {term:'Lost update', def:'Two read-modify-write cycles where one silently overwrites the other.'},
-    {term:'Write skew', def:'Two transactions read overlapping data and write different rows, jointly violating an invariant.'},
-    {term:'Snapshot isolation', def:'Each transaction reads from a consistent snapshot taken at its start; prevents most anomalies except write skew.'},
-    {term:'Serializable', aka:['serializability'], def:'The strongest isolation: results equal some one-at-a-time ordering of transactions.'},
-    {term:'MVCC', aka:['multi-version concurrency control'], def:'Keeping multiple row versions so readers see a snapshot without blocking writers.'},
-    {term:'Optimistic locking', aka:['optimistic concurrency control'], def:'Detect conflicts at write time (e.g. version column) and retry instead of locking upfront.'},
-    {term:'Pessimistic locking', def:'Locking rows before working on them so others must wait.'},
-    {term:'Deadlock', def:'Two or more transactions each waiting for locks the other holds.'},
-    {term:'B-tree', aka:['B+tree'], def:'A balanced, sorted tree of pages supporting fast lookups and range scans; the default database index.'},
-    {term:'LSM-tree', aka:['log-structured merge-tree', 'LSM'], def:'A write-optimised structure buffering writes in memory and merging immutable sorted files in the background.'},
-    {term:'SSTable', aka:['sorted string table'], def:'An immutable, sorted on-disk file of key-value pairs used by LSM engines.'},
-    {term:'Memtable', def:'The in-memory sorted buffer of recent writes in an LSM engine.'},
-    {term:'Compaction', def:'Merging LSM files to discard overwritten and deleted data.'},
-    {term:'Write amplification', def:'Bytes physically written per byte of logical data written.'},
-    {term:'Composite index', def:'An index on multiple columns, ordered by the first column, then the second, and so on.'},
-    {term:'Covering index', def:'An index containing every column a query needs, so the table isn’t read.'},
-    {term:'Inverted index', def:'A map from terms to the documents containing them; the basis of full-text search.'},
-    {term:'Normalization', def:'Structuring data so each fact is stored once, avoiding update anomalies.'},
-    {term:'Denormalization', def:'Deliberately duplicating data to speed up reads.'},
-    {term:'Replication', def:'Keeping copies of data on multiple machines.'},
-    {term:'Leader-follower replication', aka:['primary-replica', 'leader', 'follower', 'read replica', 'read replicas'], def:'One node accepts writes and streams changes to read-only followers.'},
-    {term:'Replication lag', def:'How far a follower is behind the leader.'},
-    {term:'Read-your-writes', aka:['read-your-writes consistency'], def:'A guarantee that a user always sees their own recent writes.'},
-    {term:'Failover', def:'Promoting a replica to replace a failed leader.'},
-    {term:'Split brain', def:'Two nodes both believing they are the leader and accepting writes.'},
-    {term:'Multi-leader replication', def:'Several nodes accept writes and replicate to each other, requiring conflict resolution.'},
-    {term:'Leaderless replication', def:'Clients write to and read from multiple replicas directly, using quorums.'},
-    {term:'Sharding', aka:['partitioning', 'shard', 'shards'], def:'Splitting a dataset across machines by key so each holds a subset.'},
-    {term:'Shard key', aka:['partition key'], def:'The attribute used to decide which shard a record lives on.'},
-    {term:'Hot shard', aka:['hot partition'], def:'A shard receiving disproportionate load.'},
-    {term:'Resharding', aka:['rebalancing'], def:'Moving data between shards when adding/removing capacity or fixing imbalance.'},
-    {term:'Virtual nodes', aka:['vnodes'], def:'Multiple ring positions per physical server in consistent hashing, for smoother balance.'},
-    {term:'Connection pool', aka:['connection pooling'], def:'A set of reusable open database connections lent to requests.'},
-    {term:'PgBouncer', def:'A lightweight connection pooler for PostgreSQL.'},
-    {term:'OLTP', def:'Online Transaction Processing: many small, fast transactions on current data.'},
-    {term:'OLAP', def:'Online Analytical Processing: large scans and aggregations over historical data.'},
-    {term:'Column store', aka:['columnar storage', 'columnar'], def:'Storage that keeps each column’s values together, ideal for analytics.'},
-    {term:'Data warehouse', def:'A curated, structured store optimised for analytical queries.'},
-    {term:'Data lake', def:'Cheap object storage holding raw data files in open formats.'},
-    {term:'Lakehouse', def:'A data lake with ACID table formats (Delta, Iceberg, Hudi) providing warehouse-like features.'},
-    {term:'ETL', def:'Extract, Transform, Load — transforming data before loading it into the target.'},
-    {term:'ELT', def:'Extract, Load, Transform — loading raw data first and transforming inside the warehouse.'},
-    {term:'CDC', aka:['change data capture'], def:'Capturing row-level changes from a database’s log to stream them elsewhere.'},
-    {term:'Object storage', def:'Flat key → immutable object storage over HTTP (S3, GCS), highly durable and scalable.'},
-    {term:'Block storage', def:'Raw fixed-size blocks attached to one machine, used for databases and filesystems.'},
-    {term:'Erasure coding', def:'Splitting data into fragments plus parity so it survives losses with less overhead than full replication.'},
-    {term:'3-2-1 backup rule', def:'Keep 3 copies of data on 2 kinds of media with 1 copy off-site.'}
+    {term:'SQL', aka:['SQL database'], def:'A language for asking questions of data stored in related tables. Example: SELECT * FROM bookings WHERE hotel_id = 7 lists every booking for hotel 7.'},
+    {term:'NoSQL', def:'A broad name for databases that do not use the traditional table-and-join model. Example: a key-value store or a document store.'},
+    {term:'Relational database', aka:['relational databases'], def:'A database that stores data in tables and links rows through keys. Example: a bookings table links to a guests table by guest ID.'},
+    {term:'Key-value store', def:'A database that finds one value by a known key, like a dictionary. Example: the key room:305 gives that room’s current price.'},
+    {term:'Document store', aka:['document database'], def:'A database that keeps one self-contained object, with all its fields, as a single record. Example: one document holds a hotel’s name, address and room list.'},
+    {term:'Transaction', aka:['transactions'], def:'A group of database changes that succeed or fail together. Example: booking a room and charging the card are saved as one unit.'},
+    {term:'ACID', def:'Four promises of a transaction: atomicity (all or nothing), consistency (the rules hold), isolation (transactions do not disturb each other) and durability (saved changes survive a crash). Example: a failed payment leaves no half-made booking.'},
+    {term:'BASE', def:'An approach that lets copies differ for a short time and settle on the same answer soon after. Example: a new review may show on one server a few seconds before another.'},
+    {term:'Eventual consistency', aka:['eventually consistent'], def:'If no new changes arrive, all copies end up with the same value. Example: after you edit your profile, other regions show the new name within a few seconds.'},
+    {term:'Write-ahead log', aka:['WAL'], def:'A record of each change, written to disk before the data itself changes, so the database can recover after a crash. Example: after a power cut, the database replays the log to finish saved changes.'},
+    {term:'Index', aka:['indexes', 'indices'], def:'An extra structure that helps the database find rows without reading every row, like the index at the back of a book. Example: an index on guest_id finds one guest’s bookings among 10 million rows quickly.'},
+    {term:'B-tree', aka:['B+tree', 'B-trees'], def:'A sorted tree of pages that supports exact lookups and range reads. Example: finding all bookings between two dates.'},
+    {term:'Composite index', def:'An index sorted by several columns in a chosen order. Example: an index on (city, date) finds the hotels in one city on one date quickly.'},
+    {term:'Covering index', def:'An index that holds every field a query needs, so the database does not read the table row. Example: an index on (hotel_id, price) answers “prices for hotel 7” by itself.'},
+    {term:'Hash index', def:'An index that is good for exact matches but not for ranges. Example: find booking 8841, but not the bookings between 8000 and 9000.'},
+    {term:'LSM-tree', aka:['LSM'], def:'A storage design that collects writes in memory and merges sorted files later, which makes writes fast. Example: many bookings per second are first added to memory.'},
+    {term:'Memtable', def:'The sorted area in memory that holds recent writes in an LSM tree. Example: new bookings sit here before they are written to disk.'},
+    {term:'SSTable', def:'A sorted, read-only file on disk, written from the memtable. Example: every few seconds the memtable becomes a new SSTable.'},
+    {term:'Compaction', def:'Background work that merges sorted files and throws away old versions. Example: three small files with old prices are merged into one file with the current prices.'},
+    {term:'Normalization', def:'Keeping one current copy of each fact and linking other records to it. Example: a guest’s phone number is stored once in the guests table, not copied into every booking.'},
+    {term:'Denormalization', def:'Keeping an extra copy of a fact on purpose, to make a read easier. Example: storing the hotel name inside each booking so the booking list needs no join.'},
+    {term:'MVCC', aka:['multi-version concurrency control'], def:'Multi-version concurrency control: the database keeps older versions of a row so readers see a steady view while writers work. Example: a report reads yesterday’s version while a booking updates the row.'},
+    {term:'Isolation level', aka:['isolation levels'], def:'A setting for what overlapping transactions can see of each other’s work. Example: a stricter level stops you from reading another transaction’s unsaved change.'},
+    {term:'Snapshot isolation', def:'Each transaction reads a stable snapshot of the data from one moment. Example: a report that runs for a minute sees the same bookings from start to finish.'},
+    {term:'Serializable', def:'The strictest isolation. The result is the same as if transactions ran one at a time. Example: two people cannot both book the last room.'},
+    {term:'Write skew', def:'Two transactions each read the same data and then change different rows, and together they break a rule. Example: two clerks each see 2 open rooms and each hold one for staff, so the rule “keep 1 room open” is broken.'},
+    {term:'Optimistic locking', aka:['optimistic control', 'optimistic concurrency'], def:'Do not lock. Check at save time whether someone else changed the data, and retry if they did. Example: a booking is at version 4, so the save only works if the row is still at version 4.'},
+    {term:'Pessimistic locking', aka:['pessimistic control'], def:'Lock the data before changing it, so other writers must wait. Example: lock room 305 while one guest finishes booking it.'},
+    {term:'Deadlock', aka:['deadlocks'], def:'Two transactions each wait for a lock the other holds, so neither can go on. Example: one locks room A then room B, while the other locks room B then room A.'},
+    {term:'Dirty read', def:'Reading another transaction’s change that is not saved yet and may be undone. Example: you see a room as booked, then that booking is cancelled.'},
+    {term:'Non-repeatable read', aka:['non-repeatable reads'], def:'Reading the same row twice in one transaction and getting different values. Example: a room’s price changes between your two reads.'},
+    {term:'Phantom read', aka:['phantom', 'phantoms', 'phantom reads'], def:'Running the same range query twice and finding new rows the second time. Example: a search for open rooms returns 3 rooms, then 4.'},
+    {term:'Replication', def:'Keeping copies of data on more than one machine. Example: every booking is also written to two other servers.'},
+    {term:'Replica', aka:['replicas', 'read replica', 'read replicas'], def:'A copy of a database on another machine. Example: a read replica answers search queries so the main database has less to do.'},
+    {term:'Leader', aka:['leaders'], def:'The database copy that accepts writes. Example: all bookings are written to the leader.'},
+    {term:'Follower', aka:['followers'], def:'A copy that receives changes from the leader. Example: a follower answers read-only searches.'},
+    {term:'Replication lag', aka:['replica lag'], def:'The delay before a follower receives a change from the leader. Example: a guest cancels, but the search page still shows the room as booked for 2 seconds.'},
+    {term:'Multi-leader', aka:['multi-leader replication'], def:'A setup where more than one copy accepts writes, so it needs a way to settle conflicting changes. Example: two hotel offices update the same room at the same moment.'},
+    {term:'Failover', def:'Switching to a working copy when the leader stops. Example: the follower with the latest data becomes the new leader within 30 seconds.'},
+    {term:'Sharding', aka:['partitioning', 'sharded', 'shards'], def:'Splitting data across machines by a key, so each machine holds only part of it. Example: hotels A to M on server 1 and hotels N to Z on server 2.'},
+    {term:'Shard key', aka:['shard keys'], def:'The value used to decide which shard holds a record. Example: the hotel ID decides which server holds that hotel’s bookings.'},
+    {term:'Hot shard', aka:['hot shards'], def:'One shard that gets far more work than the others. Example: a famous hotel on one server gets 100 times the bookings of the rest.'},
+    {term:'Consistent hashing', aka:['hash ring'], def:'A way to place keys on a ring of servers so that adding or removing a server moves only a few keys. Example: adding a fifth server moves about 1 in 5 keys, not all of them.'},
+    {term:'Virtual nodes', aka:['vnodes'], def:'Several positions on the ring given to one real server, to spread load more evenly. Example: each of 5 servers owns 100 spots on the ring.'},
+    {term:'Connection pool', aka:['connection pooling', 'connection pools'], def:'A set of open database connections that requests borrow and return. Example: 20 connections are shared by 500 app requests.'},
+    {term:'OLTP', def:'Online transaction processing: many small reads and writes on current data. Example: booking rooms and updating availability.'},
+    {term:'OLAP', def:'Online analytical processing: big questions over lots of history. Example: monthly hotel revenue by city.'},
+    {term:'Data warehouse', aka:['data warehouses'], def:'A database made for reports, with prepared tables for analysis. Example: finance reads it to see revenue by month.'},
+    {term:'Data lake', def:'A store of raw data files that reporting tools can read. Example: all raw booking logs saved as cheap files.'},
+    {term:'Lakehouse', def:'Managed tables built on top of data lake files, so they work like a warehouse. Example: analysts run SQL on files that sit in cheap storage.'},
+    {term:'ETL', def:'Extract, transform, load: clean the data first, then load it into the reporting store. Example: fix date formats, then load the bookings into the warehouse.'},
+    {term:'ELT', def:'Extract, load, transform: load the raw data first, then clean it inside the reporting store. Example: load raw bookings, then run SQL to clean them.'},
+    {term:'Object storage', aka:['object store'], def:'Storage where each whole file is saved and found by its key. Example: hotel photos stored under keys like hotels/7/lobby.jpg.'},
+    {term:'Block storage', def:'Disk-like storage that a machine uses directly, for example for a database. Example: the database’s data files sit on a block volume.'},
+    {term:'File storage', def:'Storage shared by several machines through folders and paths. Example: a shared folder of reports that many servers can open.'},
+    {term:'Backup', aka:['backups'], def:'A copy of data kept safe so you can recover from a mistake or a disaster. Example: nightly copies let you restore data that was deleted by accident.'},
+    {term:'Column store', aka:['column stores', 'columnar'], def:'A database that stores each column together, so reports that read a few columns are fast. Example: summing the price column without reading guest names.'},
+    {term:'Wide-column store', aka:['wide-column'], def:'A database that groups data into rows with many flexible columns, spread across machines. Example: Cassandra.'},
+    {term:'Write amplification', def:'Writing more data to disk than the app actually changed. Example: one 100-byte update can cause megabytes of rewriting while files are merged.'}
   ],
-  sources:['Martin Kleppmann, “Designing Data-Intensive Applications”', 'Berenson et al., SIGMOD 1995; Ports & Grittner, VLDB 2012', 'Chang et al., Bigtable (2006); DeCandia et al., Dynamo (2007); Ghemawat et al., GFS (2003)', 'Melnik et al., Dremel (2010); Dageville et al., Snowflake (2016); Armbrust et al., Lakehouse (2021)', 'Engineering posts from Instagram, Notion, Discord, Uber, GitHub, GitLab and Slack cited per lesson']
+  sources:['Martin Kleppmann, Designing Data-Intensive Applications', 'Berenson and others, A Critique of ANSI SQL Isolation Levels (1995)', 'Chang and others, Bigtable (2006)', 'Ghemawat and others, The Google File System (2003)', 'Melnik and others, Dremel (2010)', 'PostgreSQL documentation', 'Notion Engineering, Herding elephants (2021)']
 });
 } catch(e){ console.error('[SDA] Module "databases" failed to load', e); window.SDA && SDA.errors.push({id:'databases', error:e}); }
 })();

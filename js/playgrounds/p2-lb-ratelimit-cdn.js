@@ -12,8 +12,8 @@ const pct = (a, p) => { if (!a.length) return 0; const s = a.slice().sort((x, y)
 /* ---------------- #2 Load balancer ---------------- */
 try {
 SDA.register({kind:'playground', id:'load-balancer', module:'traffic', icon:'⚖️', title:'Load balancer simulator',
-  summary:'Live traffic through a real load-balancing simulation: pick an algorithm, add or kill servers, make one slow, toggle health checks — and watch distribution, latency and errors.',
-  explain:`<ul><li>Make one server <b>slow</b> under round robin: its queue and the p95 latency climb. Switch to <b>least connections</b> or <b>P2C</b> and watch it recover.</li><li><b>Kill</b> a server (click it). With health checks on, errors stop after the next check; turn health checks off and errors never stop.</li><li>Try <b>IP hash</b>: a few heavy clients (think office NAT gateways) make the distribution lumpy. Kill or add a server and read “clients remapped”: ~most clients move. Switch to <b>consistent hash</b> and only ~1/N move.</li><li>Pause and use <b>Step</b> to send one request at a time and read why the balancer picked that server.</li></ul><p class="lab-hint">Model: Poisson arrivals; each server is a single FIFO queue with exponential service at its capacity (slow 8, normal 25, fast 40 req/s); health checks run every 2 s; 30 clients, 3 of them 8× heavier.</p>`,
+  summary:'Send live ticket traffic to servers using different balancing rules. Add, kill or slow a server and watch the load, the delay and the errors.',
+  explain:`<h3>How to use it</h3><ol><li>Pick <b>Round robin</b> and make one server slow. Watch its queue and the p95 latency grow.</li><li>Switch to <b>Least connections</b> or <b>Power of two choices</b> (pick two servers at random, use the less busy one). The delay recovers.</li><li>Click a server to kill it. Turn health checks off and watch the errors never stop.</li></ol><h3>What to notice</h3><ul><li>A rule that ignores server load keeps feeding a slow server.</li><li>When a server leaves, IP hash moves most clients. Consistent hash moves only about 1 in N.</li></ul><div class="callout tip"><b>Important point</b><p>A load balancer must know two things: which server is least busy, and which servers are alive.</p></div><p class="lab-hint">The model uses random arrivals and one waiting line per server. Health checks run every 2 seconds.</p>`,
   real:[{co:'Envoy / Nginx / AWS ALB', tier:'confirmed', text:'Real balancers offer the same menu: round robin, weighted, least-request (Envoy uses power-of-two-choices), IP/ring/Maglev hashing, active health checks and outlier detection.', src:'Envoy, Nginx and AWS ELB documentation'}],
   mount(host, api){
     const CAP = {slow:8, normal:25, fast:40};
@@ -51,12 +51,12 @@ SDA.register({kind:'playground', id:'load-balancer', module:'traffic', icon:'⚖
     function chooseClient(){ let r = Math.random() * CW; for (const c of CLIENTS){ r -= c.w; if (r <= 0) return c; } return CLIENTS[0]; }
     function arrive(t, explain){
       const c = chooseClient(); const [s, why] = pick(c);
-      if (!s){ log.errors.push(t); if (explain) caption.innerHTML = '<b style="color:var(--bad)">503</b> — ' + why; return; }
+      if (!s){ log.errors.push(t); if (explain) caption.innerHTML = '<b style="color:var(--bad)">503:</b> ' + why; return; }
       log.assigned.push([t, s.i]);
       const failed = !s.alive || s.q.length > 400;
       if (failed) log.errors.push(t); else s.q.push({t});
       if (explain || (st.t - st.lastAnim > .11 && !api.reduced)){ st.lastAnim = st.t; d.flow([['u', 'lb'], ['lb', 's' + s.i, failed ? '✗' : null, failed ? 'var(--bad)' : null]], {dur:420}); }
-      if (explain) caption.innerHTML = `${esc(why)} ${failed ? '<b style="color:var(--bad)">But it is dead — the request fails until a health check removes it.</b>' : ''}`;
+      if (explain) caption.innerHTML = `${esc(why)} ${failed ? '<b style="color:var(--bad)">But this server is dead. The request fails until a health check removes it.</b>' : ''}`;
     }
     function serve(now){ S.forEach(s => { if (!s.alive) return; while (s.q.length){ const j = s.q[0]; const start = Math.max(s.free, j.t); if (j.end == null) j.end = start + expo(CAP[s.speed]); if (j.end <= now){ s.q.shift(); s.free = j.end; log.served.push([now, s.i]); log.lat.push([now, (j.end - j.t) * 1000]); } else break; } }); }
     function healthCheck(){ let changed = false; S.forEach(s => { const want = st.hc ? s.alive : true; if (s.healthy !== want){ s.healthy = want; changed = true; } }); if (changed) membershipChanged(); }
@@ -109,9 +109,9 @@ SDA.register({kind:'playground', id:'load-balancer', module:'traffic', icon:'⚖
 /* ---------------- #10 Rate limiter, five algorithms side by side ---------------- */
 try {
 SDA.register({kind:'playground', id:'rate-limiter', module:'traffic', icon:'🚦', title:'Rate limiters side by side',
-  summary:'Token bucket, leaky bucket, fixed window, sliding log and sliding counter receive the exact same requests. See what each allows, rejects or delays.',
-  explain:`<ul><li><b>Window-edge burst</b> pattern: the <b>fixed window</b> lets ~2× the limit through within one real second (check “max in any 1 s”); sliding windows don’t.</li><li><b>Burst ×20</b>: token bucket allows up to its capacity instantly; leaky bucket <b>delays</b> (amber → green later) instead of rejecting until its queue fills.</li><li>A token bucket may legitimately pass slightly more than the limit in one second — up to its capacity plus what refills meanwhile (amber). The red ⚠ marks the fixed window’s boundary problem: ~2× the limit.</li><li>The <b>sliding counter</b> is almost identical to the exact <b>sliding log</b>, but stores two numbers instead of every timestamp.</li></ul><p class="lab-hint">Green dot = allowed (for leaky bucket, drawn when actually processed), amber = queued, red = rejected (429). Dashed lines are fixed-window boundaries.</p>`,
-  real:[{co:'Stripe · Cloudflare · Nginx', tier:'confirmed', text:'Stripe described Redis-backed token buckets; Cloudflare a sliding-window counter; Nginx’s limit_req is a leaky bucket.', src:'Stripe Engineering (2017); Cloudflare blog (2017); Nginx docs'}],
+  summary:'Five limiter types get the exact same stream of requests. See which requests each one allows, delays or rejects.',
+  explain:`<h3>How to use it</h3><ol><li>Choose the <b>Window-edge bursts</b> pattern. The fixed window lets through about twice the limit in one real second.</li><li>Choose <b>Burst ×20</b>. The token bucket lets the burst pass up to its capacity. The leaky bucket delays requests instead.</li><li>Compare the sliding counter with the sliding log. Their results are almost the same.</li></ol><h3>What to notice</h3><ul><li>Green is allowed, amber is queued and red is rejected (429).</li><li>The sliding counter keeps two numbers. The sliding log keeps every timestamp.</li></ul><div class="callout tip"><b>Important point</b><p>A fixed window is simple, but it allows a double burst at the window edge. Sliding windows close that gap.</p></div>`,
+  real:[{co:'Stripe · Cloudflare · Nginx', tier:'confirmed', text:'Stripe described Redis-backed token buckets. Cloudflare uses a sliding-window counter. Nginx’s limit_req is a leaky bucket.', src:'Stripe Engineering (2017), Cloudflare blog (2017), Nginx docs'}],
   mount(host, api){
     const P = {limit:10, burst:10, rate:8, pattern:'edge', speed:1};
     let t = 0, paused = false, nextA = 0, lastBurst = -10, edgeNext = 1.95, lastUI = 0;
@@ -173,9 +173,9 @@ SDA.register({kind:'playground', id:'rate-limiter', module:'traffic', icon:'🚦
 /* ---------------- #16 CDN edge map ---------------- */
 try {
 SDA.register({kind:'playground', id:'cdn-edge', module:'traffic', icon:'🗺️', title:'CDN edge map: pull vs push, TTL, purge, shield',
-  summary:'Users across six cities request a Zipf-popular catalogue. Watch per-edge hit ratios, origin load and latency as you change cache size, TTL, mode, shield and versioning.',
-  explain:`<ul><li><b>Pull</b> warms up on its own: hit ratio climbs as popular objects get cached. Small caches or short TTLs push more misses to the origin.</li><li>Turn on the <b>origin shield</b>: origin requests/s drop sharply because many edges’ misses collapse at the shield.</li><li><b>Push</b> pre-loads the top objects to every edge: instant high hit ratio for the head, but the long tail always goes back to the origin.</li><li><b>Deploy a new version</b> of the hottest object. Without versioned URLs, edges keep serving the <b>stale</b> copy until TTL expiry or a purge. With versioned URLs there is nothing to purge.</li></ul><p class="lab-hint">Schematic map; RTTs are illustrative. Popularity follows Zipf (object k has weight 1/k) over 300 objects.</p>`,
-  real:[{co:'Netflix Open Connect', tier:'confirmed', text:'Pushes predicted-popular titles to ISP-embedded appliances during off-peak fill windows — push for a predictable, huge catalogue.', src:'Netflix Open Connect documentation'}, {co:'Fastly / CDNs generally', tier:'confirmed', text:'Fast global purge and origin shielding are standard CDN features for controlling freshness and origin load.', src:'Fastly documentation'}],
+  summary:'Fans in six cities ask for concert posters. Change cache size, TTL, push or pull, the shield and versioned names, and watch hit ratio, origin load and delay.',
+  explain:`<h3>How to use it</h3><ol><li>In <b>Pull</b> mode (the edge fetches a poster on its first request), watch the hit ratio climb as popular posters get cached.</li><li>Turn on <b>Origin shield</b>. The requests that reach the origin drop sharply.</li><li>Turn off <b>Versioned URLs</b> and press Deploy. Stale responses appear. Press Purge to fix them.</li></ol><h3>What to notice</h3><ul><li>Small caches and short TTLs send more requests back to the origin.</li><li>Push gives popular posters an instant hit, but rare ones still go to the origin.</li></ul><div class="callout tip"><b>Important point</b><p>A cache is fast only for what it already holds. A new file name for every version means nothing old needs removing.</p></div>`,
+  real:[{co:'Netflix Open Connect', tier:'confirmed', text:'Pushes predicted-popular titles to ISP-embedded appliances during off-peak fill windows. This is push for a big, predictable catalogue.', src:'Netflix Open Connect documentation'}, {co:'Fastly / CDNs generally', tier:'confirmed', text:'Fast global purge and origin shielding are standard CDN features for controlling freshness and origin load.', src:'Fastly documentation'}],
   mount(host, api){
     const EDGES = [{id:'vir', name:'Virginia', x:90, y:170, rtt:200, w:13}, {id:'fra', name:'Frankfurt', x:230, y:100, w:12, rtt:120}, {id:'del', name:'Delhi', x:470, y:120, w:30, rtt:30}, {id:'che', name:'Chennai', x:500, y:300, w:20, rtt:25}, {id:'sin', name:'Singapore', x:680, y:290, w:15, rtt:60}, {id:'syd', name:'Sydney', x:820, y:390, w:10, rtt:150}];
     const ORIGIN = {x:400, y:230}, SHIELD = {x:330, y:330};
@@ -206,13 +206,13 @@ SDA.register({kind:'playground', id:'cdn-edge', module:'traffic', icon:'🗺️'
       let r = Math.random() * EW, e = EDGES[0]; for (const x of EDGES){ r -= x.w; if (r <= 0){ e = x; break; } }
       const k = pickObj(), key = keyOf(k), m = caches[e.id]; const ps = stats.per[e.id]; ps.n++;
       const hit = lruGet(m, key); let lat = 8, story;
-      if (hit){ ps.h++; if (hit.ver !== ver[k]) stats.stale++; story = `${e.name}: object #${k + 1} — <b style="color:var(--ok)">edge hit</b>${hit.ver !== ver[k] ? ' <b style="color:var(--bad)">(STALE version!)</b>' : ''}, ~${lat} ms.`; if (!narrate && Math.random() < .25) anim({x:e.x, y:e.y + 40}, e, css('--ok')); }
+      if (hit){ ps.h++; if (hit.ver !== ver[k]) stats.stale++; story = `${e.name}: poster #${k + 1}: <b style="color:var(--ok)">edge hit</b>${hit.ver !== ver[k] ? ' <b style="color:var(--bad)">(STALE version!)</b>' : ''}, ~${lat} ms.`; if (!narrate && Math.random() < .25) anim({x:e.x, y:e.y + 40}, e, css('--ok')); }
       else {
         let fromShield = false;
         if (P.shield){ const sh = lruGet(shieldC, key); lat += e.rtt; if (sh) fromShield = true; else { lat += 2; stats.origin.push(t); lruSet(shieldC, key, {exp:t + P.ttl, ver:ver[k]}, P.cap * 3); } anim(e, SHIELD, css('--warn')); }
         else { lat += e.rtt; stats.origin.push(t); anim(e, ORIGIN, css('--warn')); }
         if (P.mode === 'pull') lruSet(m, key, {exp:t + P.ttl, ver:ver[k]}, P.cap);
-        story = `${e.name}: object #${k + 1} — <b style="color:var(--warn)">edge miss</b> → ${P.shield ? (fromShield ? 'shield hit' : 'shield miss → origin') : 'origin'} (+${e.rtt} ms RTT)${P.mode === 'push' ? '; push mode does not cache it at the edge' : '; now cached at the edge'}. ~${lat} ms.`;
+        story = `${e.name}: poster #${k + 1}: <b style="color:var(--warn)">edge miss</b> → ${P.shield ? (fromShield ? 'shield hit' : 'shield miss → origin') : 'origin'} (+${e.rtt} ms RTT)${P.mode === 'push' ? '; push mode does not cache it at the edge' : '; now cached at the edge'}. ~${lat} ms.`;
       }
       stats.req.push([t, !!hit]); stats.lat.push([t, lat]);
       if (narrate) cap.innerHTML = story;
@@ -236,11 +236,11 @@ SDA.register({kind:'playground', id:'cdn-edge', module:'traffic', icon:'🗺️'
       ui.slider({label:'Edge cache size', min:10, max:300, step:10, value:60, fmt:v => v + ' objects', onInput:v => { P.cap = v; if (P.mode === 'push') publish(); }}).el,
       ui.slider({label:'TTL', min:5, max:300, step:5, value:60, fmt:v => v + ' s', onInput:v => { P.ttl = v; }}).el,
       ui.slider({label:'Request rate', min:10, max:200, step:10, value:60, fmt:v => v + ' req/s', onInput:v => { P.rate = v; }}).el),
-      el('div', {class:'row', style:{gap:'18px', margin:'10px 0'}}, ui.toggle({label:'Origin shield', checked:false, onChange:v => { P.shield = v; setShieldVis(); }}).el, ui.toggle({label:'Versioned URLs (app.3f9a.js)', checked:true, onChange:v => { P.versioned = v; }}).el),
+      el('div', {class:'row', style:{gap:'18px', margin:'10px 0'}}, ui.toggle({label:'Origin shield', checked:false, onChange:v => { P.shield = v; setShieldVis(); }}).el, ui.toggle({label:'Versioned URLs (poster.v2.jpg)', checked:true, onChange:v => { P.versioned = v; }}).el),
       el('div', {class:'controls', style:{marginBottom:'10px'}}, pauseB, ui.button('⏭ Step one request', () => { if (!P.paused){ P.paused = true; pauseB.innerHTML = '▶ Resume'; } request(true); updateUI(); }, 'sm'),
-        ui.button('🚀 Deploy new version of #1', () => { ver[0]++; cap.innerHTML = P.versioned ? 'New version deployed under a <b>new URL</b>: edges simply miss and fetch it. Nothing stale.' : 'New version deployed under the <b>same URL</b>: edges keep serving the old copy until TTL expiry — watch “stale responses”. Try Purge.'; }, 'sm'),
-        ui.button('🧹 Purge #1 everywhere', () => { Object.values(caches).forEach(m => { [...m.keys()].filter(k => k === '0' || k.startsWith('0@')).forEach(k => m.delete(k)); }); [...shieldC.keys()].filter(k => k === '0' || k.startsWith('0@')).forEach(k => shieldC.delete(k)); cap.innerHTML = 'Purged object #1 from every edge and the shield. The next requests miss once, then fetch the fresh version.'; }, 'sm'),
-        ui.button('↺ Reset caches', () => { resetCaches(); cap.textContent = 'Caches emptied — watch the hit ratio warm up again.'; }, 'sm ghost')),
+        ui.button('🚀 Deploy new version of #1', () => { ver[0]++; cap.innerHTML = P.versioned ? 'New version deployed under a <b>new URL</b>: edges simply miss and fetch it. Nothing stale.' : 'New version deployed under the <b>same URL</b>: edges keep serving the old copy until the TTL ends. Watch “stale responses”. Try Purge.'; }, 'sm'),
+        ui.button('🧹 Purge #1 everywhere', () => { Object.values(caches).forEach(m => { [...m.keys()].filter(k => k === '0' || k.startsWith('0@')).forEach(k => m.delete(k)); }); [...shieldC.keys()].filter(k => k === '0' || k.startsWith('0@')).forEach(k => shieldC.delete(k)); cap.innerHTML = 'Purged poster #1 from every edge and the shield. The next requests miss once, then fetch the fresh version.'; }, 'sm'),
+        ui.button('↺ Reset caches', () => { resetCaches(); cap.textContent = 'Caches emptied. Watch the hit ratio warm up again.'; }, 'sm ghost')),
       el('div', {class:'chart-box'}, svg), el('div', {class:'legend', style:{margin:'8px 0'}}, ...['client', 'cdn', 'cache', 'service'].map(tp => el('span', {class:'lg t-' + tp}, el('span', {class:'sw ' + tp}), SDA.TYPES[tp].label)), el('span', {style:{color:'var(--ok)'}}, '● edge hit'), el('span', {style:{color:'var(--warn)'}}, '● miss travelling to shield/origin')),
       cap, el('div', {style:{height:'10px'}}), met.el);
     resetCaches(); setShieldVis();

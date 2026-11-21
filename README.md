@@ -11,7 +11,7 @@ A fully self-contained, single-page web application built with **vanilla HTML, C
 | Feature | Description |
 |---|---|
 | 📚 **15 Modules, 143+ Lessons** | Structured curriculum from beginner to principal-engineer level |
-| 🎮 **27 Interactive Playgrounds** | Hands-on simulations with real logic (not fake loops) |
+| 🎮 **28 Interactive Playgrounds** | Hands-on simulations with real logic (not fake loops) |
 | 🧪 **8 Code Labs** | In-browser coding with a Run button and self-checking asserts |
 | 📊 **28 Case Studies** | Real-world system designs (URL Shortener → Google Search → Netflix) |
 | 🏋️ **33 Practice Challenges** | Hint-based problem solving with animated solution diagrams |
@@ -59,19 +59,19 @@ Beginner → Intermediate → Advanced → Distributed → Real-World → Princi
 
 Each lesson follows a **7-part teaching template**:
 
-1. 🔴 **The Problem** — What breaks without this?
-2. 💡 **Intuition** — Everyday analogy (India-friendly)
-3. ⚙️ **How It Works** — Animated diagram with Play/Pause/Step/Reset/Speed controls
-4. ⚖️ **Trade-offs** — When to use, when to avoid, alternatives
-5. 🏢 **Real-World** — Who uses this (with accuracy tiers: confirmed / inference / educational)
-6. ⚠️ **Common Mistakes & Interview Angles**
-7. 🧪 **Try It** — Link to a playground, lab, or quiz
+1. 🔴 **A small example** — One real situation, so the idea has something to hold on to
+2. 💡 **The everyday picture** — Everyday analogy (India-friendly)
+3. ⚙️ **Step by step** — Follow one example, with an animated diagram and Play/Pause/Step/Reset/Speed controls
+4. ⚖️ **When to use it** — Good fit, poor fit and other options
+5. 🏢 **Real life** — Who uses this (with accuracy tiers: confirmed / inference / educational)
+6. ⚠️ **Common mistakes** — Plus the interview angle
+7. 🧪 **Try it yourself** — Link to a playground, lab, or quiz
 
-Plus a **Simple/Deep toggle** on every lesson for progressive disclosure.
+Every lesson also has a **Go deeper** button at the end of "Step by step". It opens a short block with worked numbers, edge cases and internals, so the main text stays simple.
 
 ---
 
-## 🎮 Interactive Playgrounds (27)
+## 🎮 Interactive Playgrounds (28)
 
 Each playground has **real simulation logic**, live metrics, and controls (Reset, Step, Speed):
 
@@ -246,7 +246,7 @@ Numbers are labelled **"illustrative"** unless publicly disclosed. Sources are n
 2. Create content in the appropriate `js/` directory
 3. Register it via `SDA.register({ kind: '...', ... })`
 4. Add the `<script src>` tag above `<!-- @@NEXT-PARTS-GO-HERE@@ -->` in `index.html`
-5. Run `bun tools/check.js` to validate
+5. Run `bun tools/check.js` to validate, `bun tools/lesson-check.js <module-id>` for lessons, and `bun tools/content-check.js` for playgrounds, labs, cases, challenges, projects, solutions and scenarios
 6. Run `python3 tools/bundle.py` to regenerate the bundle
 
 ---

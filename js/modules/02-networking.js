@@ -14,7 +14,7 @@ function ttlSim(host, api){
   const box = el('div'); const info = el('div', {class:'verdict warn', role:'status', style:{marginTop:'10px'}});
   const frac = x => { const eff = P.lowered ? 60 : Math.pow(10, P.ttl); const comp = Math.max(0, 1 - x * 3600 / eff); const ign = Math.max(0, 1 - x / 48); return ((1 - P.ig / 100) * comp + (P.ig / 100) * ign) * 100; };
   function build(){ box.innerHTML = ''; chart = lineChart(box, {label:'Share of traffic still reaching the OLD server after a DNS change', w:680, h:250, xMin:0, xMax:48, yMax:100, xTicks:[0, 6, 12, 24, 36, 48], xFmt:v => v + 'h', yTicks:[0, 25, 50, 75, 100], yFmt:v => v + '%', xLabel:'Hours since you changed the DNS record', yLabel:'Traffic to old IP', fn:frac, color:'var(--c-ext)'}); show(t); }
-  function show(x){ const f = frac(x); chart.set(x, `${x.toFixed(1)}h → ${f.toFixed(1)}%`); info.className = 'verdict ' + (f < 1 ? 'ok' : f < 20 ? 'warn' : 'bad'); info.textContent = f < 1 ? `After ${x.toFixed(1)} h almost nobody reaches the old server — safe to shut it down.` : `After ${x.toFixed(1)} h, ${f.toFixed(1)}% of users still hit the OLD server. Shut it down now and they get errors.`; }
+  function show(x){ const f = frac(x); chart.set(x, `${x.toFixed(1)}h → ${f.toFixed(1)}%`); info.className = 'verdict ' + (f < 1 ? 'ok' : f < 20 ? 'warn' : 'bad'); info.textContent = f < 1 ? `After ${x.toFixed(1)} hours, fewer than 1% still reach the old server. Check its traffic before shutting it down.` : `After ${x.toFixed(1)} hours, ${f.toFixed(1)}% still reach the old server. Shutting it down now would give them errors.`; }
   const s1 = ui.slider({label:'Record TTL before the change', min:1.78, max:4.94, step:.01, value:P.ttl, fmt:v => fmtDur(Math.pow(10, v) * 1000), onInput:v => { P.ttl = v; build(); }});
   const s2 = ui.slider({label:'Resolvers that ignore TTL (cache ~2 days)', min:0, max:10, step:.5, value:3, fmt:v => v + '%', onInput:v => { P.ig = v; build(); }});
   const tg = ui.toggle({label:'Best practice: lowered TTL to 60 s a day before the change', checked:false, onChange:v => { P.lowered = v; build(); }});
@@ -51,8 +51,8 @@ function lossSim(host, api){
   lp.pause();
   const s = ui.slider({label:'Packet loss', min:0, max:40, step:1, value:loss, fmt:v => v + '%', onInput:v => { loss = v; }});
   host.append(el('div', {class:'ctl-grid'}, s.el), el('div', {class:'controls', style:{margin:'10px 0'}}, ui.button('📤 Send 20 packets', roll, 'sm primary'), clock),
-    el('div', {class:'lab-hint'}, 'TCP — green = handed to the app, amber = arrived but stuck behind a lost earlier packet'), tcpRow,
-    el('div', {class:'lab-hint', style:{marginTop:'10px'}}, 'UDP — green = delivered immediately, red ✗ = lost forever (the app decides what to do)'), udpRow,
+    el('div', {class:'lab-hint'}, 'TCP: green pieces reached the app. Amber pieces arrived but wait for an earlier missing piece.'), tcpRow,
+    el('div', {class:'lab-hint', style:{marginTop:'10px'}}, 'UDP: green pieces arrived. A red mark means this model lost the piece.'), udpRow,
     el('div', {style:{height:'12px'}}), met.el, el('p', {class:'lab-hint'}, `Model: one packet every ${GAP} ms, one-way delay ${RTT / 2} ms, retransmission timeout ${RTO} ms (a lost retransmission waits another RTO). Shown at 0.35× speed.`));
   roll();
 }
@@ -77,13 +77,13 @@ function h2Model(host){
 function certChecker(host){
   const STEPS = ['Build a chain from the server certificate up to a trusted root CA', 'Verify every signature in the chain', 'Check validity dates (not before / not after)', 'Check the hostname matches the certificate’s Subject Alternative Names', 'Check revocation status (OCSP stapling / CRL)', 'Server proves it holds the private key (signs the handshake)'];
   const SC = {
-    valid:[-1, '🔒 Connection secure. Every check passed; keys are derived and traffic is encrypted.'],
-    expired:[2, 'NET::ERR_CERT_DATE_INVALID — the certificate expired. Automate renewal (ACME) and alert well before expiry.'],
-    host:[3, 'NET::ERR_CERT_COMMON_NAME_INVALID — the certificate is for a different name (e.g. www.example.com but you visited api.example.com).'],
-    self:[0, 'NET::ERR_CERT_AUTHORITY_INVALID — self-signed: no trusted CA vouches for it. Fine for local dev, never for users.'],
-    inter:[0, 'Chain incomplete — the server forgot to send the intermediate certificate. Some browsers can fetch it, but many clients (curl, older Android, other services) fail with “unable to get local issuer certificate”.'],
-    revoked:[4, 'NET::ERR_CERT_REVOKED — the CA revoked this certificate (e.g. the private key leaked).'],
-    mitm:[5, 'Handshake fails — an attacker presented a copy of the real certificate but cannot sign with its private key.']
+    valid:[-1, '🔒 Every check passed. The browser and site can protect their traffic.'],
+    expired:[2, 'The certificate expired. The food site must renew it before customers can trust this connection.'],
+    host:[3, 'The certificate names another site. A certificate for orders.example.com cannot prove the identity of food.example.com.'],
+    self:[0, 'The browser does not trust the certificate issuer. This may work for a local test, but not for customer checkout.'],
+    inter:[0, 'The certificate chain is incomplete. The server did not provide the issuer information some clients need.'],
+    revoked:[4, 'The certificate was revoked by its issuer and can no longer be trusted.'],
+    mitm:[5, 'The presenter copied a public certificate but cannot prove it has the matching private key.']
   };
   const list = el('ol', {class:'steps', style:{marginTop:'12px'}}); const res = el('div', {class:'verdict ok', role:'status'}); let timers = [];
   SDA.onDispose(() => timers.forEach(clearTimeout));
@@ -101,19 +101,19 @@ function fetchCalc(host){
   function calc(){
     const n = P.n, full = 2000, slim = 150;
     const rows = [
-      ['REST (generic endpoints)', 2 + n, 2, 2 * full + 2 * n * full, '—', 'Over-fetches: every object returns ~60 fields; restaurants fetched one by one (N+1).'],
-      ['REST + composite / BFF endpoint', 1, 1, (1 + 2 * n) * slim, '—', 'One call shaped for this screen — but you build and maintain one endpoint per screen.'],
-      ['GraphQL', 1, 1, (1 + 2 * n) * slim, P.loader ? '3 batched' : String(2 + n), P.loader ? 'DataLoader batches the N restaurant lookups into one.' : 'Client asks for exact fields; but naive resolvers still make N+1 backend calls — enable DataLoader.'],
-      ['gRPC (service-to-service)', 1, 1, Math.round((1 + 2 * n) * slim * .4), '—', 'Binary protobuf over HTTP/2: smaller and faster to parse — ideal between internal services, not usually from browsers.']
+      ['REST with separate URLs', 2 + n, 2, 2 * full + 2 * n * full, 'not shown', 'Several phone calls return more fields than this screen needs.'],
+      ['REST with one screen endpoint', 1, 1, (1 + 2 * n) * slim, 'not shown', 'One phone call returns fields chosen for this screen.'],
+      ['GraphQL', 1, 1, (1 + 2 * n) * slim, P.loader ? '3 grouped' : String(2 + n), P.loader ? 'The server groups restaurant lookups into one request.' : 'The phone asks for selected fields, but the server still makes many restaurant lookups.'],
+      ['gRPC between services', 1, 1, Math.round((1 + 2 * n) * slim * .4), 'not shown', 'Compact messages can help services exchange these fields internally.']
     ];
     out.innerHTML = '';
     out.append(frag(h.table(['Approach', 'Client requests', 'Round trips', 'Bytes to client', 'Backend calls', 'Notes'], rows.map(r => [`<b>${r[0]}</b>`, r[1], r[2], fmtBytes(r[3]), r[4], r[5]]), [1, 2, 3])));
-    out.append(el('p', {class:'lab-hint'}, `At ${P.rtt} ms RTT, network waiting alone: REST ≈ ${2 * P.rtt} ms, single-call approaches ≈ ${P.rtt} ms. Byte sizes are illustrative (full object ≈ 2 KB, needed fields ≈ 150 B, protobuf ≈ 40% of JSON).`));
+    out.append(el('p', {class:'lab-hint'}, `This model sends separate REST requests in two waves, so their network wait is about ${2 * P.rtt} ms at ${P.rtt} ms per trip. The one-call choices wait for about one trip. The byte sizes are teaching estimates.`));
   }
   const a = ui.slider({label:'Orders on the screen', min:1, max:20, step:1, value:5, fmt:v => v, onInput:v => { P.n = v; calc(); }});
   const b = ui.slider({label:'Mobile round-trip time', min:20, max:400, step:10, value:80, fmt:v => v + ' ms', onInput:v => { P.rtt = v; calc(); }});
   const c = ui.toggle({label:'GraphQL server uses DataLoader batching', checked:false, onChange:v => { P.loader = v; calc(); }});
-  host.append(el('p', {class:'muted', style:{marginTop:0}}, 'Screen: “My orders” — your name, your last N orders, and each order’s restaurant name.'), el('div', {class:'ctl-grid'}, a.el, b.el), el('div', {style:{margin:'10px 0'}}, c.el), out); calc();
+  host.append(el('p', {class:'muted', style:{marginTop:0}}, 'The food app needs your name, recent orders, and each restaurant name.'), el('div', {class:'ctl-grid'}, a.el, b.el), el('div', {style:{margin:'10px 0'}}, c.el), out); calc();
 }
 function transportSim(host){
   const P = {rate:6, poll:5}; const out = el('div'); const cv = el('canvas', {height:400, style:{height:'200px'}, 'aria-label':'Timeline of events and requests for each technique over 60 seconds'}); const box = el('div', {class:'chart-box', style:{marginTop:'12px'}}, cv);
@@ -143,20 +143,20 @@ function transportSim(host){
 function paginationDemo(host){
   let feed, next, offA, seenA, curB, seenB;
   const colA = el('div', {class:'stack'}), colB = el('div', {class:'stack'}); const msg = el('div', {class:'verdict warn', role:'status'});
-  const reset = () => { feed = []; for (let i = 30; i >= 1; i--) feed.push({id:i}); next = 31; offA = 0; seenA = []; curB = null; seenB = []; render(); msg.className = 'verdict warn'; msg.textContent = 'Load page 1, then make new posts arrive (or delete one), then load the next page.'; };
+  const reset = () => { feed = []; for (let i = 30; i >= 1; i--) feed.push({id:i}); next = 31; offA = 0; seenA = []; curB = null; seenB = []; render(); msg.className = 'verdict warn'; msg.textContent = 'Load page 1 of restaurant orders. Then add or remove an order before loading page 2.'; };
   const pageA = () => { const p = feed.slice(offA, offA + 5); offA += 5; p.forEach(x => seenA.push({id:x.id, dup:seenA.some(s => s.id === x.id)})); };
   const pageB = () => { const p = feed.filter(x => curB == null || x.id < curB).slice(0, 5); if (p.length) curB = p[p.length - 1].id; p.forEach(x => seenB.push({id:x.id, dup:false})); };
   const skipped = seen => { const ids = seen.map(s => s.id); if (!ids.length) return []; const lo = Math.min(...ids), hi = Math.max(...ids); return feed.filter(f => f.id > lo && f.id < hi && !ids.includes(f.id) && f.id < 31).map(f => f.id); };
-  function col(target, seen, title){ target.innerHTML = ''; target.append(el('b', null, title)); const sk = skipped(seen); target.append(el('div', {class:'pill-row'}, ...seen.map(s => el('span', {class:'chip mono', style:s.dup ? {borderColor:'var(--bad)', color:'var(--bad)'} : null}, `#${s.id}${s.dup ? ' dup' : ''}`)))); if (sk.length) target.append(el('div', {class:'lab-hint', style:{color:'var(--bad)'}}, `Never shown (skipped): ${sk.map(x => '#' + x).join(', ')}`)); }
-  function render(){ col(colA, seenA, 'Offset pagination  (LIMIT 5 OFFSET n)'); col(colB, seenB, 'Cursor pagination  (WHERE id < last_id LIMIT 5)'); }
-  const load = () => { pageA(); pageB(); render(); const d = seenA.filter(s => s.dup).length; const sk = skipped(seenA).length; msg.className = 'verdict ' + (d || sk ? 'bad' : 'ok'); msg.textContent = d || sk ? `Offset showed ${d} duplicate(s) and skipped ${sk} post(s). Cursor pagination stayed correct because it remembers WHERE it was, not HOW FAR.` : 'Both look correct so far — now change the data between pages.'; };
-  host.append(el('div', {class:'controls'}, ui.button('📄 Load next page', load, 'sm primary'), ui.button('🆕 2 new posts arrive at the top', () => { feed.unshift({id:next++}, {id:next++}); feed.sort((a, b) => b.id - a.id); msg.textContent = 'Two new posts inserted at the top. Now load the next page.'; }, 'sm'), ui.button('🗑 Delete a post you already saw', () => { const s = seenA[seenA.length - 1]; if (!s){ msg.textContent = 'Load a page first.'; return; } feed = feed.filter(f => f.id !== s.id); msg.textContent = `Post #${s.id} deleted. Load the next page.`; }, 'sm'), ui.button('↺ Reset', reset, 'sm ghost')), el('div', {style:{height:'10px'}}), msg, el('div', {class:'grid c2', style:{marginTop:'12px'}}, el('div', {class:'card'}, colA), el('div', {class:'card'}, colB)));
+  function col(target, seen, title){ target.innerHTML = ''; target.append(el('b', null, title)); const sk = skipped(seen); target.append(el('div', {class:'pill-row'}, ...seen.map(s => el('span', {class:'chip mono', style:s.dup ? {borderColor:'var(--bad)', color:'var(--bad)'} : null}, `#${s.id}${s.dup ? ' repeat' : ''}`)))); if (sk.length) target.append(el('div', {class:'lab-hint', style:{color:'var(--bad)'}}, `Orders never shown: ${sk.map(x => '#' + x).join(', ')}`)); }
+  function render(){ col(colA, seenA, 'Numbered offset pages'); col(colB, seenB, 'Cursor pages'); }
+  const load = () => { pageA(); pageB(); render(); const d = seenA.filter(s => s.dup).length; const sk = skipped(seenA).length; msg.className = 'verdict ' + (d || sk ? 'bad' : 'ok'); msg.textContent = d || sk ? `Offset pages repeated ${d} order(s) and skipped ${sk}. Cursor pages continue after the last order seen.` : 'Both look correct so far. Add or remove an order before the next page.'; };
+  host.append(el('div', {class:'controls'}, ui.button('📄 Load next page', load, 'sm primary'), ui.button('🆕 Add 2 new orders at the top', () => { feed.unshift({id:next++}, {id:next++}); feed.sort((a, b) => b.id - a.id); msg.textContent = 'Two new orders are at the top. Now load the next page.'; }, 'sm'), ui.button('🗑 Remove an order you saw', () => { const s = seenA[seenA.length - 1]; if (!s){ msg.textContent = 'Load a page first.'; return; } feed = feed.filter(f => f.id !== s.id); msg.textContent = `Order #${s.id} removed. Load the next page.`; }, 'sm'), ui.button('↺ Reset', reset, 'sm ghost')), el('div', {style:{height:'10px'}}), msg, el('div', {class:'grid c2', style:{marginTop:'12px'}}, el('div', {class:'card'}, colA), el('div', {class:'card'}, colB)));
   reset();
 }
 function idemDemo(host, api){
   let lost = true, useKey = false, busy = false, n = 0; const ledger = el('div', {class:'stack'}); const store = new Map();
   const holder = el('div');
-  const d = new api.Diagram(holder, {title:'Pay ₹499 — with a flaky network', w:720, h:200, alt:'App calls payments API which writes to a ledger; the response may be lost and the app retries.', nodes:[{id:'app', type:'client', label:'Mobile app', x:80, y:100}, {id:'api', type:'service', label:'Payments API', x:340, y:100}, {id:'db', type:'db', label:'Ledger + keys', x:600, y:100}], edges:[{from:'app', to:'api'}, {from:'api', to:'db'}], caption:'Press <b>Pay</b>. The first response may get lost in a tunnel, so the app retries.'});
+  const d = new api.Diagram(holder, {title:'Pay ₹499 through a weak connection', w:720, h:200, alt:'The food app asks the payment server to record a charge. The response may be lost before the app can read it.', nodes:[{id:'app', type:'client', label:'Food app', x:80, y:100}, {id:'api', type:'service', label:'Payment server', x:340, y:100}, {id:'db', type:'db', label:'Charges + keys', x:600, y:100}], edges:[{from:'app', to:'api'}, {from:'api', to:'db'}], caption:'Press <b>Pay</b>. The first answer may get lost, so the app tries again.'});
   const charge = (k) => { n++; ledger.prepend(el('div', {class:'sort-item ' + (ledger.children.length ? 'wrong' : 'right')}, `Charge #${n}: ₹499 ${k ? '(key ' + k.slice(0, 8) + '…)' : '(no key)'}`, ledger.children.length ? el('b', {style:{color:'var(--bad)'}}, 'DUPLICATE') : el('span', null, '✓'))); };
   async function pay(){
     if (busy) return; busy = true; ledger.innerHTML = ''; store.clear(); n = 0;
@@ -183,428 +183,458 @@ function idemDemo(host, api){
 const lessons = [
 {
   id:'ip-and-dns', title:'IP addresses, ports and DNS', minutes:9, tags:['IP','IPv6','NAT','DNS','TTL'],
-  summary:'Every machine has an IP address, every service a port, and DNS turns names into IPs with cached answers that expire after a TTL.',
-  problem:`<p>You migrate checkout to new servers on Friday night and update DNS. On Saturday morning 30% of users are still hitting the old servers — which you already switched off. DNS answers are <strong>cached all over the internet</strong> for their TTL, and some resolvers hold them even longer.</p>`,
-  intuition:`An IP address is a building’s street address; a port is the flat number inside it. DNS is your phone’s contact list: you tap “Mom”, not her number. Each phone keeps its own copy — if Mom changes numbers, people with an old copy keep calling the old one until they refresh.`,
+  summary:'An IP address names a destination on a network. A port identifies a program there. DNS turns a readable site name into an address.',
+  problem:`<h3>A small example</h3><p>A customer opens a food delivery site to browse restaurants. The browser knows the site name, but it needs an address.</p><ul><li>Site name: food.example.com</li><li>One server address</li><li>A web program listening on port 443</li></ul><p>How does the browser find the right server and program?</p>`,
+  intuition:`An IP address is like a building address. A port is the room number. DNS works like a contact list that finds the address behind a name.`,
   how:{
-    steps:[`<b>IPv4</b> addresses are 32 bits (~4.3 billion — long since exhausted); <b>IPv6</b> is 128 bits. Private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) are reused inside networks behind <b>NAT</b>.`, `A <b>port</b> picks the program on a host: 443 HTTPS, 53 DNS, 5432 Postgres, 6379 Redis.`, `<b>DNS</b> is a hierarchy: root → TLD (.com, .in) → the domain’s authoritative nameservers.`, `Records: <b>A</b> (IPv4), <b>AAAA</b> (IPv6), <b>CNAME</b> (alias), <b>MX</b> (mail), <b>TXT</b> (verification), <b>NS</b> (delegation).`, `Every answer has a <b>TTL</b>; browsers, operating systems and resolvers cache it until it expires.`],
-    diagram:{title:'Resolving api.example.com (cold cache)', w:780, h:280, alt:'Browser asks a recursive resolver, which asks the root, .com TLD and authoritative servers in turn.',
-      nodes:[{id:'b', type:'client', label:'Browser + OS', x:80, y:140}, {id:'r', type:'ext', label:'Recursive resolver', x:290, y:140, w:150}, {id:'root', type:'ext', label:'Root server', x:560, y:45}, {id:'tld', type:'ext', label:'.com TLD', x:600, y:140}, {id:'auth', type:'ext', label:'Authoritative NS', x:560, y:235, w:140}],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow the browser as it finds food.example.com.</p>',
+    steps:[
+      {icon:'🏠', title:'Start with a name', text:'The customer enters food.example.com. The browser needs a numeric IP address to reach it.'},
+      {icon:'📇', title:'Ask DNS', text:'DNS, the domain name system, looks up the address behind that site name.'},
+      {icon:'🔎', title:'Follow the lookup', text:'A resolver, a server that finds DNS answers, asks which server knows the food site’s address.'},
+      {icon:'📍', title:'Use the answer', text:'The browser receives an IP address and contacts it. Port 443 selects the web program on that server.'},
+      {icon:'⏳', title:'Keep the answer briefly', text:'DNS answers have a time to live, or TTL. Until it expires, a saved address may still point to an old server.'}
+    ],
+    diagram:{title:'Finding food.example.com', w:780, h:280, alt:'The browser asks a resolver for the food site address. The resolver asks the root, .com, and the site owner in order.',
+      nodes:[{id:'b', type:'client', label:'Browser', x:80, y:140}, {id:'r', type:'ext', label:'DNS resolver', x:290, y:140, w:150}, {id:'root', type:'ext', label:'Root', x:560, y:45}, {id:'tld', type:'ext', label:'.com guide', x:600, y:140}, {id:'auth', type:'ext', label:'Site owner DNS', x:560, y:235, w:140}],
       edges:[{from:'b', to:'r'}, {from:'r', to:'root'}, {from:'r', to:'tld'}, {from:'r', to:'auth'}],
       steps:[
-        {note:'The browser and OS caches miss, so the stub resolver asks a <b>recursive resolver</b> (your ISP, 1.1.1.1 or 8.8.8.8).', flow:[['b', 'r', 'api.example.com?']], hl:['r']},
-        {note:'The resolver asks a <b>root server</b>: “Who handles .com?” It gets a referral, not the answer.', flow:[['r', 'root', '.com?'], ['root', 'r', 'ask TLD']], hl:['root']},
-        {note:'It asks the <b>.com TLD</b> servers: “Who handles example.com?” Another referral.', flow:[['r', 'tld', 'example.com?'], ['tld', 'r', 'ask NS']], hl:['tld']},
-        {note:'The <b>authoritative</b> nameserver returns the A record with a TTL (say 300 s).', flow:[['r', 'auth', 'api?'], ['auth', 'r', 'A 203.0.113.7 TTL 300']], hl:['auth']},
-        {note:'The resolver <b>caches</b> it and answers. For the next 300 s, everyone using this resolver gets the cached answer instantly.', flow:[['r', 'b', '203.0.113.7']], hl:['b', 'r']}
+        {note:'The browser asks a resolver for food.example.com.', flow:[['b', 'r', 'food.example.com?']], hl:['r']},
+        {note:'The root points the resolver toward names ending in .com.', flow:[['r', 'root', '.com?'], ['root', 'r', 'ask .com']], hl:['root']},
+        {note:'The .com guide points toward the owner of example.com.', flow:[['r', 'tld', 'example.com?'], ['tld', 'r', 'ask owner']], hl:['tld']},
+        {note:'The site owner gives an address and a 300-second TTL.', flow:[['r', 'auth', 'food?'], ['auth', 'r', '203.0.113.7 TTL 300']], hl:['auth']},
+        {note:'The resolver saves that answer for its TTL and replies to the browser.', flow:[['r', 'b', '203.0.113.7']], hl:['b', 'r']}
       ]},
-    deep:`<p><b>Recursive vs iterative:</b> your stub asks the resolver to do the full job (recursive); the resolver walks the hierarchy with iterative queries. Resolvers also cache negative answers (NXDOMAIN) using the SOA record’s negative-caching TTL.</p><p><b>Transport:</b> DNS uses UDP port 53 for small answers and TCP for large ones and zone transfers; EDNS(0) allows bigger UDP payloads; DNS-over-HTTPS/TLS encrypt queries. <b>CNAME</b> can’t live at the zone apex (example.com itself), so providers offer ALIAS/ANAME-style records.</p><p><b>Migrations:</b> lower the TTL to ~60 s at least one old-TTL period <i>before</i> the change, switch, keep the old servers running until traffic drains, then raise the TTL again. <b>CIDR</b>: a /24 has 256 addresses, a /16 has 65,536. Mobile networks use carrier-grade NAT, so many users can share one public IPv4 — a reason IP-based rate limiting is crude.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Address book', 'Food site'], [['Contact name', 'food.example.com'], ['Street address', 'Server IP address'], ['Room number', 'Port 443']])}</div><div class="callout tip"><b>Important point</b><p>A site name can stay the same even when its server address changes. Saved DNS answers take time to expire.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Before moving servers', 'Reason'], [['Lower the TTL early', 'Saved old answers expire sooner.'], ['Keep the old server running', 'Some browsers may still use its address.'], ['Watch traffic to the old address', 'Shut it down after requests stop.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>An IPv4 address has 32 bits, so there are 2 to the power of 32, which is 4,294,967,296 addresses, about 4.3 billion. A port has 16 bits, so there are 65,536 ports, numbered 0 to 65,535.</p><p>Say the food site has a TTL of 3,600 seconds. A resolver that saved the answer one second ago keeps it for 3,599 more seconds. To move safely, lower the TTL to 60 seconds first. Then wait 3,600 seconds so every old answer expires. After the move, a stale answer lasts at most 60 seconds.</p><h4>When it goes wrong</h4><p>Say a visitor looks up food.example.com before you create its record. The resolver may save the answer "no such name" for a few minutes. If you add the record right after, that visitor still sees an error until the saved answer expires. Create new names before you share them.</p><h4>How it works inside</h4><p>A full lookup has three steps. A root server points to the .com servers. A .com server points to the food site's own name servers. Those give the IP address. Resolvers save each step, so most lookups skip straight to the last one.</p>`
   },
-  tradeoffs:{use:[`<b>Short TTLs (30–300 s)</b> before migrations or when DNS drives failover`, `<b>Long TTLs (hours)</b> for stable records — fewer lookups, faster pages`], avoid:[`Hard-coding IP addresses in clients or config`, `Assuming a DNS change is instant`], alt:[`A stable load-balancer or anycast IP in front, so backends change without DNS changes`, `Service discovery (Consul, Kubernetes DNS) for internal services`]},
+  tradeoffs:{use:[`For the food site move, lower the TTL before changing the address.`, `Keep the old food server running until requests to it stop.`], avoid:[`Do not put a fixed IP address in the food app if the server may move.`, `Do not assume every saved DNS answer changes the moment the record changes.`], alt:[`If the site address stays stable, change the server behind that address instead of asking browsers to learn a new one.`]},
   real:[
-    {co:'Root server system', tier:'confirmed', text:'There are 13 named root server identities (a through m), operated by 12 organisations, but each is served from many sites worldwide via anycast — well over a thousand instances in total.', src:'root-servers.org'},
-    {co:'India & IPv6', tier:'confirmed', text:'India shows one of the highest IPv6 adoption rates in Google’s public per-country IPv6 statistics, driven largely by mobile networks such as Reliance Jio.', src:'Google IPv6 adoption statistics'},
-    {co:'AWS Route 53', tier:'confirmed', text:'Offers health-checked failover, weighted, latency-based and geolocation routing — DNS used as the first layer of load balancing.', src:'Amazon Route 53 documentation'}
+    {co:'Root server system', tier:'confirmed', text:'Root servers help resolvers find who handles names ending in .com and other endings.', src:'root-servers.org'},
+    {co:'Cloudflare', tier:'confirmed', text:'Cloudflare offers a public DNS resolver that can look up site addresses for clients.', src:'Cloudflare 1.1.1.1 documentation'}
   ],
-  mistakes:[`Forgetting TTLs during a migration and switching the old servers off too early`, `Hard-coding IPs instead of names`, `Treating client IP as a user identity behind carrier-grade NAT`],
-  interview:[`Mention DNS caching at browser, OS and resolver layers when explaining a request`, `Note DNS as the first, coarse load-balancing layer (GeoDNS, weighted records)`],
-  tryit:{note:'You change a DNS record. How long until the old server stops receiving traffic? Move the TTL and see.', mount:(host, api) => ttlSim(host, api)},
-  sources:[`RFC 1034/1035 (DNS)`, `root-servers.org`, `Amazon Route 53 documentation`]
+  mistakes:[`Turning off the old food server immediately after changing DNS.`, `Treating a port and an IP address as the same thing.`],
+  interview:[`Trace the site name to an address, then explain what port 443 selects.`, `Explain why a saved DNS answer can send customers to the old server.`],
+  tryit:[{quiz:[
+    {q:'What does DNS give the browser for food.example.com?', options:['A new password', 'A server address', 'A restaurant menu', 'A payment receipt'], answer:1, why:'DNS turns the readable name into an address.'},
+    {q:'Why keep the old food server running after a DNS change?', options:['The name has been deleted', 'All browsers change together', 'Some saved answers still point to it', 'Port 443 stops working forever'], answer:2, why:'Saved answers can last until their TTL expires or longer.'}
+  ]}, {note:'Change the DNS TTL and watch how many customers still reach the old address after the move.', mount:(host, api) => ttlSim(host, api)}],
+  sources:[`RFC 1034 and RFC 1035`, `root-servers.org`, `Cloudflare 1.1.1.1 documentation`]
 },
 {
   id:'tcp-vs-udp', title:'TCP vs UDP', minutes:8, tags:['TCP','UDP','head-of-line blocking','congestion control'],
-  summary:'TCP gives reliable, ordered byte streams at the cost of waiting. UDP gives fast, independent datagrams and lets the app decide what to do about loss.',
-  problem:`<p>Your video-call app runs over TCP and freezes for a moment whenever a packet is lost — every later packet waits for the lost one to be resent. Your live cricket-score feed over UDP occasionally misses an update. Both are behaving exactly as their protocols promise.</p>`,
-  intuition:`TCP is registered post with tracking: numbered parcels, signatures on delivery, resends if something goes missing, and you open them strictly in order. UDP is dropping flyers through letterboxes: fast and cheap, no confirmation, and some never arrive.`,
+  summary:'TCP delivers data in order and resends missing pieces. UDP sends separate pieces without promising delivery or order. The app chooses based on what matters.',
+  problem:`<h3>A small example</h3><p>A food delivery app handles both a payment and a voice call with the rider.</p><ul><li>The payment must arrive correctly once.</li><li>The call needs the latest sound quickly.</li><li>A network packet may get lost.</li></ul><p>Should both kinds of data wait for a missing piece?</p>`,
+  intuition:`TCP is tracked mail that resends a missing page before the reader continues. UDP is a live radio message. If a moment is lost, the next moment can still play.`,
   how:{
-    steps:[`<b>TCP</b> opens a connection (3-way handshake), numbers every byte, waits for acknowledgements and retransmits losses.`, `TCP delivers data <b>in order</b>: if packet 2 is lost, packets 3, 4, 5 wait in the receiver’s buffer — <b>head-of-line blocking</b>.`, `<b>Flow control</b> (receive window) stops a fast sender overwhelming a slow receiver; <b>congestion control</b> (slow start, then careful growth) avoids overwhelming the network.`, `<b>UDP</b> just sends datagrams: no connection, no ordering, no retransmission. Each one stands alone.`, `Use TCP when every byte must arrive in order (web pages, APIs, databases). Use UDP when fresh beats complete (voice, video, games) or when you build your own reliability (QUIC, DNS retries).`],
+    intro:'<h3>What happens behind the scenes</h3><p>Send three pieces of data and let the second one get lost.</p>',
+    steps:[
+      {icon:'📦', title:'Split data into pieces', text:'Networks carry small packets. A payment message or voice call may need several.'},
+      {icon:'🤝', title:'TCP checks delivery', text:'TCP numbers the data and asks the receiver to confirm it arrived.'},
+      {icon:'🔁', title:'TCP fills the gap', text:'If piece 2 is lost, TCP resends it. The app waits before receiving later pieces in order.'},
+      {icon:'📡', title:'UDP sends each piece', text:'UDP sends pieces without built-in resending or ordering. The voice app can play the next sound even after one is lost.'},
+      {icon:'⚖️', title:'Choose by the need', text:'Use reliable ordered delivery for payment data. Use a voice transport that favors fresh sound during a call.'}
+    ],
     diagram:{title:'One lost segment under TCP', w:740, h:220, alt:'A sender sends segments 1 to 3; segment 2 is lost and retransmitted, and segment 3 waits for it.',
-      nodes:[{id:'s', type:'client', label:'Sender', x:80, y:110}, {id:'n', type:'ext', label:'Network', x:370, y:110}, {id:'r', type:'service', label:'Receiver app', x:650, y:110}],
+      nodes:[{id:'s', type:'client', label:'Customer app', x:80, y:110}, {id:'n', type:'ext', label:'Network', x:370, y:110}, {id:'r', type:'service', label:'Food server', x:650, y:110}],
       edges:[{from:'s', to:'n'}, {from:'n', to:'r'}],
       steps:[
-        {note:'Segment 1 arrives and is handed to the app.', flow:[['s', 'n', 'seg 1'], ['n', 'r', 'seg 1']], hl:['r']},
-        {note:'Segment 2 is <b>dropped</b> by a congested router.', flow:[['s', 'n', 'seg 2 ✗']], status:{n:'hot'}},
-        {note:'Segment 3 arrives — but TCP must deliver in order, so it <b>waits in the buffer</b>. The app sees nothing.', flow:[['s', 'n', 'seg 3'], ['n', 'r', 'seg 3 (held)']], status:{n:'ok'}, hl:['r']},
-        {note:'The receiver keeps acknowledging only up to 1 (duplicate ACKs). The sender detects the loss.', flow:[['r', 'n', 'ACK 1'], ['n', 's', 'dup ACK']]},
-        {note:'Segment 2 is <b>retransmitted</b>; now 2 and 3 are released to the app together. Correct, but late — under UDP, 3 would have been usable immediately.', flow:[['s', 'n', 'seg 2 (again)'], ['n', 'r', '2 + 3']], hl:['r']}
+        {note:'The first part of the payment message arrives.', flow:[['s', 'n', 'part 1'], ['n', 'r', 'part 1']], hl:['r']},
+        {note:'The second part is lost on the network.', flow:[['s', 'n', 'part 2 ✗']], status:{n:'hot'}},
+        {note:'The third part arrives, but TCP holds it until part 2 arrives.', flow:[['s', 'n', 'part 3'], ['n', 'r', 'part 3 held']], status:{n:'ok'}, hl:['r']},
+        {note:'The receiver says it still needs part 2.', flow:[['r', 'n', 'need 2'], ['n', 's', 'need 2']]},
+        {note:'TCP resends part 2, then delivers parts 2 and 3 in order.', flow:[['s', 'n', 'part 2 again'], ['n', 'r', '2 then 3']], hl:['r']}
       ]},
-    deep:`<p><b>Congestion control</b> algorithms: Reno and CUBIC (Linux’s long-time default) treat loss as the congestion signal; Google’s <b>BBR</b> (2016) models bottleneck bandwidth and round-trip time instead. New connections start with a small window (slow start), which is why short-lived connections never reach full speed — another reason to reuse connections.</p><p><b>Operational gotchas:</b> each closed TCP connection lingers in TIME_WAIT; high churn of outbound connections can exhaust ephemeral ports — pool connections. SYN floods target the half-open connection backlog (defended by SYN cookies). Ethernet’s 1,500-byte MTU bounds packet size; oversized UDP datagrams fragment and are more likely to be lost.</p><p><b>UDP needs app-level design:</b> sequence numbers to detect loss and reordering, jitter buffers for media, forward error correction, and congestion control so you don’t harm the network. QUIC implements all of this in user space on top of UDP.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Message', 'What happens if one piece is lost'], [['Tracked letter', 'Wait for the missing page before reading on.'], ['Live radio', 'Hear the next moment even if one word was lost.']])}</div><div class="callout tip"><b>Important point</b><p>TCP and UDP make different delivery promises. The app still decides how to handle a missing response.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Food app feature', 'Useful choice'], [['Place an order or payment', 'TCP for complete, ordered data.'], ['Live voice with the rider', 'UDP-based voice so fresh sound can continue.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say the phone and server are 80 ms apart for a round trip. TCP needs one round trip to set up before the app can send. So the payment waits 80 ms before its first byte leaves. UDP has no setup, so a voice packet can leave at once.</p><p>Voice apps often send a packet every 20 ms. That is 1,000 ÷ 20 = 50 packets each second. If TCP must resend one lost packet, it takes at least one round trip, 80 ms. That holds back 80 ÷ 20 = 4 packets of sound. A UDP voice app just skips the lost 20 ms.</p><h4>How it works inside</h4><p>A UDP header is 8 bytes. A TCP header is at least 20 bytes, because it carries numbers for order and confirmation. Both sit on top of IP, so the extra bytes are the cost of TCP's promises.</p><h4>When it goes wrong</h4><p>Some office networks block UDP. A voice app should then fall back to TCP. The call gets worse but still works.</p>`
   },
-  tradeoffs:{use:[`<b>TCP:</b> web, APIs, databases, file transfer — anything needing every byte in order`, `<b>UDP:</b> real-time voice/video, games, DNS lookups, telemetry where the latest value matters most`], avoid:[`UDP if you would end up re-implementing TCP badly`, `TCP for real-time media where late data is useless`], alt:[`QUIC: reliable, multiplexed streams over UDP without cross-stream head-of-line blocking`, `WebRTC data channels with configurable reliability and ordering`]},
+  tradeoffs:{use:[`For the food app payment request, TCP keeps message data complete and ordered.`, `For a rider voice call, a UDP-based transport can keep fresh sound moving.`], avoid:[`Do not assume UDP will resend lost payment data for you.`, `Do not force every late voice piece to block newer sound.`], alt:[`The app can build reliability on UDP when it needs both. You will learn QUIC in Lesson 3.`]},
   real:[
-    {co:'DNS', tier:'confirmed', text:'Queries normally use UDP port 53 for speed and fall back to TCP for large responses and zone transfers.', src:'RFC 1035, RFC 7766'},
-    {co:'Discord', tier:'confirmed', text:'Voice chat uses WebRTC, whose media travels over UDP, to keep latency low for millions of concurrent voice users.', src:'Discord Engineering, “How Discord Handles Two and Half Million Concurrent Voice Users using WebRTC” (2018)'},
-    {co:'Google', tier:'confirmed', text:'Developed the BBR congestion-control algorithm and deployed it for Google services including YouTube.', src:'Cardwell et al., “BBR: Congestion-Based Congestion Control”, ACM Queue (2016)'}
+    {co:'DNS', tier:'confirmed', text:'Small DNS queries commonly use UDP. Larger answers and some other DNS work can use TCP.', src:'RFC 1035 and RFC 7766'}
   ],
-  mistakes:[`Opening a new TCP connection per request instead of pooling`, `Sending large UDP datagrams that fragment`, `Assuming UDP packets arrive in order or at all`],
-  interview:[`Explain head-of-line blocking and why it motivated QUIC/HTTP/3`, `Justify UDP for media: a late frame is a useless frame`],
-  tryit:{note:'Send 20 packets over a lossy link. Compare when TCP and UDP hand data to the application.', mount:(host, api) => lossSim(host, api)},
-  sources:[`RFC 9293 (TCP), RFC 768 (UDP)`, `Cardwell et al., “BBR”, ACM Queue 2016`, `Discord Engineering blog (2018)`]
+  mistakes:[`Assuming UDP pieces arrive in order.`, `Assuming TCP alone prevents a payment from being charged twice.`],
+  interview:[`Explain what TCP does after part 2 is lost.`, `Explain why live voice may prefer the next sound over an old missing piece.`],
+  tryit:[{quiz:[
+    {q:'Which transport resends missing data and delivers it in order?', options:['UDP', 'Neither', 'Both always do', 'TCP'], answer:3, why:'TCP tracks delivery and fills gaps before handing later data to the app.'},
+    {q:'Why may voice use a UDP-based transport?', options:['The next sound can still play after a missing piece', 'UDP guarantees every piece arrives', 'Voice has no data', 'It prevents all network loss'], answer:0, why:'Fresh sound can matter more than replaying an old moment.'}
+  ]}, {note:'Send 20 pieces with some loss. Watch how TCP waits and which UDP pieces arrive.', mount:(host, api) => lossSim(host, api)}],
+  sources:[`RFC 9293 (TCP)`, `RFC 768 (UDP)`, `RFC 1035 and RFC 7766`]
 },
 {
   id:'http-versions', title:'HTTP/1.1 vs HTTP/2 vs HTTP/3', minutes:9, tags:['HTTP/2','HTTP/3','QUIC','multiplexing','HPACK'],
-  summary:'HTTP/1.1: one request at a time per connection. HTTP/2: many streams over one TCP connection. HTTP/3: many streams over QUIC, so one loss doesn’t stall them all.',
-  problem:`<p>A product page loads 80 small files. Over HTTP/1.1 on a 3G connection it takes ~6 seconds; enabling HTTP/2 at the CDN cuts that sharply; on lossy mobile networks HTTP/3 helps further. Same files, same server — why such different times?</p>`,
-  intuition:`HTTP/1.1 is a sweet shop with six counters where each counter serves one order at a time. HTTP/2 is one counter where you hand over every order at once and dishes come back in any order — but if the single conveyor belt jams, every dish waits. HTTP/3 gives each dish its own belt behind the same counter: a jam delays only that dish.`,
+  summary:'HTTP defines how a browser asks for a page and receives an answer. Its three versions move many requests differently, especially when a network packet is lost.',
+  problem:`<h3>A small example</h3><p>A customer opens the food app’s restaurant page. The browser needs several small files before it can draw the menu.</p><ul><li>40 page files</li><li>One mobile connection</li><li>Occasional lost network packets</li></ul><p>How can the HTTP version change the waiting time for the same page?</p>`,
+  intuition:`Imagine a kitchen receiving many small orders. One counter handles them one by one. Another accepts several at once. Separate delivery lanes keep one delayed dish from holding every other dish.`,
   how:{
-    steps:[`<b>HTTP/1.1</b>: text protocol; one outstanding request per connection in practice. Browsers open ~6 connections per host. Era of hacks: domain sharding, sprites, bundling.`, `<b>HTTP/2</b>: binary framing; many concurrent <b>streams</b> over one TCP connection; header compression (HPACK). But a lost TCP packet stalls every stream.`, `<b>HTTP/3</b>: HTTP over <b>QUIC</b> on UDP. Streams are independent at the transport layer, the handshake is one round trip (zero on resumption), headers use QPACK, and connections can survive a network change (Wi-Fi → 4G).`, `The semantics (methods, status codes, headers) are identical across versions; only the wire format and transport change.`],
-    diagram:{title:'Many requests, three generations', w:740, h:260, alt:'A browser fetching several resources over HTTP/1.1, HTTP/2 and HTTP/3.',
-      nodes:[{id:'b', type:'client', label:'Browser', x:90, y:130}, {id:'n', type:'ext', label:'Network', x:360, y:130}, {id:'s', type:'cdn', label:'Server / CDN', x:640, y:130}],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow requests for the food page’s files.</p>',
+    steps:[
+      {icon:'📄', title:'Ask for files', text:'The browser requests the page, styles, and scripts. HTTP gives these requests and responses a common format.'},
+      {icon:'1️⃣', title:'HTTP/1.1 uses turns', text:'Each connection handles one active request at a time. Browsers open several connections to fetch more files.'},
+      {icon:'2️⃣', title:'HTTP/2 shares a connection', text:'Many file requests use separate streams within one TCP connection. A lost TCP packet can delay all its streams, which is called head-of-line blocking.'},
+      {icon:'3️⃣', title:'HTTP/3 separates streams', text:'HTTP/3 uses QUIC, which adds reliable streams over UDP. A loss in one stream need not block the others.'},
+      {icon:'🧪', title:'Compare the page', text:'Measure the whole restaurant page on the customer’s network. The same HTTP version can behave differently under loss.'}
+    ],
+    diagram:{title:'Fetching files for the restaurant page', w:740, h:260, alt:'A browser requests several food page files over HTTP/1.1, HTTP/2, and HTTP/3.',
+      nodes:[{id:'b', type:'client', label:'Browser', x:90, y:130}, {id:'n', type:'ext', label:'Network', x:360, y:130}, {id:'s', type:'cdn', label:'Food site', x:640, y:130}],
       edges:[{from:'b', to:'n'}, {from:'n', to:'s'}],
       steps:[
-        {note:'<b>HTTP/1.1:</b> each connection carries one request at a time; extra requests queue behind it.', flow:[['b', 'n', 'GET a.css'], ['n', 's'], ['s', 'n'], ['n', 'b', 'a.css'], ['b', 'n', 'GET b.js'], ['n', 's']], hl:['b'], dur:600},
-        {note:'<b>HTTP/2:</b> all requests go out at once as interleaved streams on one connection.', flow:[['b', 'n', 'stream 1'], ['b', 'n', 'stream 3'], ['b', 'n', 'stream 5'], ['b', 'n', 'stream 7']], parallel:true, hl:['n']},
-        {note:'…but one lost TCP packet <b>stalls every stream</b> until it is retransmitted.', flow:[['n', 's', 'loss!']], status:{n:'hot'}},
-        {note:'<b>HTTP/3 (QUIC):</b> streams are independent; a loss delays only its own stream while the others keep flowing.', status:{n:'ok'}, flow:[['s', 'n', 's1'], ['s', 'n', 's3'], ['s', 'n', 's5']], parallel:true, hl:['s']}
+        {note:'HTTP/1.1 sends one file request on this connection, then another.', flow:[['b', 'n', 'menu.css?'], ['n', 's'], ['s', 'n'], ['n', 'b', 'menu.css'], ['b', 'n', 'app.js?'], ['n', 's']], hl:['b'], dur:600},
+        {note:'HTTP/2 sends several file requests on one connection.', flow:[['b', 'n', 'file 1'], ['b', 'n', 'file 2'], ['b', 'n', 'file 3'], ['b', 'n', 'file 4']], parallel:true, hl:['n']},
+        {note:'One lost TCP packet makes all those streams wait for its missing bytes.', flow:[['n', 's', 'lost packet']], status:{n:'hot'}},
+        {note:'HTTP/3 lets other streams continue while the lost stream recovers.', status:{n:'ok'}, flow:[['s', 'n', 'file 1'], ['s', 'n', 'file 3'], ['s', 'n', 'file 4']], parallel:true, hl:['s']}
       ]},
-    deep:`<p><b>Negotiation:</b> HTTP/2 is chosen during the TLS handshake via ALPN; HTTP/3 is discovered through the <code>Alt-Svc</code> header (or DNS HTTPS records) and then tried over UDP, falling back to TCP where networks block UDP.</p><p><b>Server push</b> in HTTP/2 promised to send resources before the browser asked, but proved hard to use well; Chrome removed support in 2022 — preload hints and 103 Early Hints are the replacements.</p><p><b>Costs:</b> QUIC runs in user space and encrypts more of its headers, which eases evolution and privacy but costs more CPU per byte than kernel TCP with offloads. HTTP/1.1-era tricks such as domain sharding now <i>hurt</i>, because they split one efficient multiplexed connection into several.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Kitchen setup', 'Page files'], [['One order at a time per counter', 'HTTP/1.1 uses turns on each connection.'], ['Several orders share one lane', 'HTTP/2 carries several streams together.'], ['Separate lanes for separate orders', 'HTTP/3 keeps streams independent under loss.']])}</div><div class="callout tip"><b>Important point</b><p>The versions keep the same kind of request and answer. They change how those messages travel.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Version', 'What to expect'], [['HTTP/1.1', 'Works, but many files may wait for a connection.'], ['HTTP/2', 'Usually fetches many files efficiently on one connection.'], ['HTTP/3', 'Can help when a mobile network loses packets.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say the page needs 40 small files and each request takes one 100 ms round trip. Browsers often open about 6 connections to one site. With HTTP/1.1 that is 40 ÷ 6 = 6.7, so 7 rounds. 7 × 100 = 700 ms. HTTP/2 sends all 40 requests together on one connection. That is about 1 round trip, or 100 ms, plus setup.</p><h4>How it works inside</h4><p>HTTP/2 also compresses headers. Say each request carries an 800-byte cookie header. HTTP/1.1 sends it 40 times, which is 800 × 40 = 32,000 bytes. HTTP/2 sends it in full once, then refers to it with a few bytes each time.</p><p>A new TCP and TLS 1.3 connection needs 2 round trips before data. HTTP/3 needs 1, because QUIC sets up the connection and the protection together. At 100 ms, that saves 100 ms.</p><h4>When it goes wrong</h4><p>Say one packet in HTTP/2 is lost. All 40 streams stop until the resend arrives, at least 100 ms. In HTTP/3 only the stream that owned that packet waits. The other 39 keep loading.</p>`
   },
-  tradeoffs:{use:[`<b>HTTP/2</b> everywhere by default (CDNs and modern load balancers support it)`, `<b>HTTP/3</b> for mobile, lossy or long-distance users`], avoid:[`HTTP/1.1 hacks (sharding, sprites) on HTTP/2/3`, `Relying on UDP-only paths without TCP fallback`], alt:[`Fewer, smaller resources and good caching beat any protocol upgrade`, `Server-side rendering / streaming to reduce request chains`]},
+  tradeoffs:{use:[`For the food page, test HTTP/2 when many files are requested over one connection.`, `Try HTTP/3 for customers on mobile networks with packet loss.`], avoid:[`Do not assume HTTP/3 will improve every food page without measuring it.`, `Do not depend on a UDP-only route when some customer networks block it.`], alt:[`Send fewer or smaller page files if download work is the main delay.`]},
   real:[
-    {co:'Google', tier:'confirmed', text:'Built QUIC and deployed it for its own services (including YouTube) before the IETF standardised it as RFC 9000; HTTP/3 is RFC 9114.', src:'RFC 9000, RFC 9114; Langley et al., “The QUIC Transport Protocol”, SIGCOMM 2017'},
-    {co:'Chrome', tier:'confirmed', text:'Removed HTTP/2 server push support in 2022, recommending preload and 103 Early Hints instead.', src:'Chrome Developers blog, “Removing HTTP/2 Server Push from Chrome” (2022)'},
-    {co:'All major browsers', tier:'confirmed', text:'Limit concurrent HTTP/1.1 connections per host (about six), the reason pages with many assets were slow before HTTP/2.', src:'Browser networking documentation'}
+    {co:'Google', tier:'confirmed', text:'Google developed QUIC before it became an internet standard. HTTP/3 uses the standardized version.', src:'RFC 9000 and RFC 9114'}
   ],
-  mistakes:[`Domain sharding on HTTP/2`, `Expecting HTTP/2 to fix lossy-network stalls (it doesn’t — that’s HTTP/3’s job)`, `Forgetting long-lived HTTP/2 connections defeat connection-level (L4) load balancing`],
-  interview:[`Explain HOL blocking at the application layer (1.1) vs the transport layer (2) and how QUIC removes it`, `Note HTTP/2 connections are long-lived — load balance per request at L7`],
-  tryit:{note:'A simplified page-load model. Change the number of resources and the round-trip time, and add a packet loss.', mount:host => h2Model(host)},
-  sources:[`RFC 9110–9114`, `Langley et al., SIGCOMM 2017`, `Ilya Grigorik, “High Performance Browser Networking”`]
+  mistakes:[`Assuming HTTP/2 and HTTP/3 handle a lost packet the same way.`, `Blaming the HTTP version when the restaurant page itself sends too many large files.`],
+  interview:[`Explain one request per HTTP/1.1 connection versus many streams on HTTP/2 and HTTP/3.`, `Explain why QUIC lets other streams continue after one loss.`],
+  tryit:[{quiz:[
+    {q:'Which version puts many streams on one TCP connection?', options:['None of them', 'HTTP/2', 'HTTP/1.1', 'HTTP/3'], answer:1, why:'HTTP/2 shares one TCP connection across streams.'},
+    {q:'What can HTTP/3 do when one stream loses data?', options:['Stop every browser tab', 'Remove the server', 'Continue other streams', 'Guarantee no packet is ever lost'], answer:2, why:'QUIC recovers loss within the affected stream while others can continue.'}
+  ]}, {note:'In the page-load model, increase file count and round-trip time. Add one lost packet and compare the three versions.', mount:host => h2Model(host)}],
+  sources:[`RFC 9000`, `RFC 9110 to RFC 9114`]
 },
 {
   id:'https-tls', title:'HTTPS and the TLS handshake', minutes:9, tags:['TLS','HTTPS','certificates','mTLS','PKI'],
-  summary:'TLS gives three guarantees: privacy (encryption), integrity (no tampering) and authenticity (you are really talking to the site named in the certificate).',
-  problem:`<p>On café Wi-Fi anyone on the network can read or change plain HTTP traffic — inject ads, steal session cookies, or impersonate the site. HTTPS must answer three questions: can anyone read this, can anyone change it, and am I <em>really</em> talking to zomato.com?</p>`,
-  intuition:`Sending valuables by courier: first check the courier’s government ID, issued by an authority you trust (the certificate and CA). Then agree a secret lock combination over a public phone line in a way eavesdroppers can’t reconstruct (Diffie-Hellman key exchange). Then everything travels in a locked box only the two of you can open (symmetric encryption).`,
+  summary:'HTTPS is HTTP carried inside a protected TLS connection. TLS checks the site’s identity, agrees on a secret key, and protects data while it travels.',
+  problem:`<h3>A small example</h3><p>A customer places a food order using café Wi-Fi. The browser sends private details to the food site.</p><ul><li>Delivery address</li><li>Order details</li><li>A connection over a shared network</li></ul><p>How can the browser check the site and keep these details private in transit?</p>`,
+  intuition:`Imagine checking a courier’s ID before handing over a sealed box. The ID helps you trust the destination. The seal protects the contents during delivery.`,
   how:{
+    intro:'<h3>What happens behind the scenes</h3><p>Follow the browser before it sends the order.</p>',
     stepper:{title:'TLS 1.3 handshake and verification', items:[
-      {title:'ClientHello', tag:'client → server', text:'Supported cipher suites, a random value, the server name (SNI), and a <b>key share</b> (an ephemeral Diffie-Hellman public key).'},
-      {title:'ServerHello + key share', tag:'server → client', text:'Server picks the cipher, sends its own key share. Both sides can now derive the same secret; everything after this is encrypted.'},
-      {title:'Certificate', tag:'server → client', text:'The server’s certificate chain: leaf (for zomato.com) → intermediate CA → (root, already in the client’s trust store).'},
-      {title:'CertificateVerify', tag:'proof of key', text:'The server signs the handshake transcript with the certificate’s <b>private key</b>, proving it isn’t just replaying a public certificate.'},
-      {title:'Client verifies', tag:'trust checks', text:'Chain to a trusted root, signatures, dates, hostname vs Subject Alternative Names, revocation.'},
-      {title:'Finished → app data', tag:'1 round trip', text:'Both send Finished; HTTP requests flow encrypted with fast symmetric ciphers (AES-GCM or ChaCha20-Poly1305).'}
+      {title:'Browser says hello', tag:'start', text:'The browser names food.example.com and offers ways to protect the connection.'},
+      {title:'Server answers', tag:'choose', text:'The food site chooses a method and sends information used to agree on a secret key.'},
+      {title:'Server sends proof', tag:'certificate', text:'The site sends a certificate that names food.example.com and links to an issuer the browser trusts.'},
+      {title:'Server proves key ownership', tag:'signature', text:'The site proves it holds the private key linked to that certificate.'},
+      {title:'Browser checks', tag:'trust', text:'The browser checks the name, dates, issuer, and proof before trusting the site.'},
+      {title:'Order travels protected', tag:'HTTPS', text:'The browser sends the HTTP order request inside the protected TLS connection.'}
     ]},
-    steps:[`Asymmetric crypto (certificates, key exchange) is used only to <b>agree</b> keys; bulk data uses fast symmetric encryption.`, `Ephemeral key exchange gives <b>forward secrecy</b>: stealing the server’s private key later doesn’t decrypt recorded past traffic.`, `TLS is usually <b>terminated</b> at the load balancer or CDN; traffic to backends can be re-encrypted.`, `<b>mTLS</b> (mutual TLS): the client also presents a certificate — common for service-to-service authentication.`],
-    deep:`<p><b>PKI:</b> browsers and OSes ship a root store; CAs sign intermediates, which sign leaf certificates. <b>Certificate Transparency</b> requires publicly trusted certificates to be logged in append-only logs, so mis-issuance can be detected. Revocation is imperfect (CRLs are big, OCSP leaks privacy and adds latency); OCSP stapling and short-lived certificates help.</p><p><b>TLS 1.3</b> removed legacy options (RSA key exchange, static DH, CBC suites), leaving a handful of AEAD cipher suites. Resumption uses pre-shared keys; 0-RTT data can be replayed, so only idempotent requests should use it.</p><p><b>Operations:</b> automate issuance and renewal with ACME (RFC 8555), alert on expiry well ahead, keep private keys in a KMS/HSM where possible, and enable HSTS so browsers refuse plaintext downgrades. Termination choices: terminate at the edge (enables L7 routing, WAF, caching), passthrough (end-to-end confidentiality, L4 only), or terminate and re-encrypt (zero-trust networks).</p>`
+    steps:[
+      {icon:'🤝', title:'Start a handshake', text:'The browser and food site exchange messages before sending order data. This setup is the TLS handshake.'},
+      {icon:'🪪', title:'Check the certificate', text:'A certificate names the site and carries its public key. The browser checks its name, dates, and trusted issuer.'},
+      {icon:'🔑', title:'Agree on a secret', text:'The browser and site use key exchange to derive the same secret without sending that secret openly.'},
+      {icon:'🔒', title:'Protect the order', text:'They use the secret to encrypt and check later messages. The browser can now send its HTTP order request as HTTPS.'}
+    ],
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Courier delivery', 'Food order'], [['Check the courier’s ID', 'Check the site certificate.'], ['Agree on a lock only you share', 'Derive a secret key.'], ['Send a sealed box', 'Send protected order data.']])}</div><div class="callout tip"><b>Important point</b><p>The browser must verify the site before trusting the protected connection.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['If this check fails', 'What the customer sees'], [['Wrong site name', 'The browser warns about the certificate.'], ['Expired certificate', 'The browser warns that trust cannot be confirmed.'], ['Valid certificate', 'The order can travel through HTTPS.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say the phone is 80 ms from the server. TCP needs 1 round trip. TLS 1.3 needs 1 more. So the order waits 2 × 80 = 160 ms before it can be sent. The older TLS 1.2 needs 2 round trips of its own, so 3 × 80 = 240 ms.</p><p>Say a certificate lasts 90 days. If the company renews it at day 60, it has 90 − 60 = 30 days to fix a failed renewal before customers see a warning.</p><h4>How it works inside</h4><p>The handshake uses public-key math, which is slow. It runs once. The order data is then protected with the shared secret key, which is much faster. That is why one handshake can protect thousands of messages.</p><h4>When it goes wrong</h4><p>TLS 1.3 lets a returning visitor send data in the very first message. This is called 0-RTT. An attacker who copies that message can send it again. So only allow it for requests that are safe to repeat, such as viewing a menu. You will learn why in Lesson 8.</p>`
   },
-  tradeoffs:{use:[`<b>Terminate at the LB/CDN</b> for L7 routing, WAF, caching and central certificate management`, `<b>Re-encrypt or mTLS</b> inside the network for zero-trust and compliance`], avoid:[`Manual certificate renewal`, `Long-lived certificates with no expiry monitoring`, `Disabling verification “temporarily” in service clients`], alt:[`TLS passthrough when the backend must hold the keys`, `A service mesh to automate mTLS between services`]},
+  tradeoffs:{use:[`Use HTTPS for the food app’s browsing and checkout pages so the browser can verify the site and protect traffic.`, `Renew the food site certificate before it expires.`], avoid:[`Do not ask customers to ignore a certificate warning during checkout.`, `Do not leave certificate renewal to a last-minute manual task.`], alt:[`For calls between the company’s own services, both sides can present certificates. This is called mutual TLS.`]},
   real:[
-    {co:'Let’s Encrypt', tier:'confirmed', text:'A free, automated certificate authority built around the ACME protocol, issuing short-lived (90-day) certificates to encourage automated renewal.', src:'letsencrypt.org; RFC 8555 (ACME)'},
-    {co:'Microsoft Teams', tier:'confirmed', text:'Suffered an outage in February 2020 after an authentication certificate was allowed to expire — a classic, preventable failure mode.', src:'Microsoft statements, February 2020'},
-    {co:'Google Chrome', tier:'confirmed', text:'Began labelling all plain-HTTP pages “Not secure” in 2018 (Chrome 68), accelerating HTTPS adoption.', src:'Chromium blog (2018)'}
+    {co:'Let’s Encrypt', tier:'confirmed', text:'Let’s Encrypt provides certificates through an automated process so sites can renew them regularly.', src:'Let’s Encrypt documentation'},
+    {co:'Google Chrome', tier:'confirmed', text:'Chrome warns users when they visit a plain HTTP page instead of a protected HTTPS page.', src:'Chromium blog (2018)'}
   ],
-  mistakes:[`Letting certificates expire (no automation, no alerts)`, `Serving an incomplete chain (missing intermediate)`, `Turning off certificate verification in internal clients`, `Using 0-RTT for non-idempotent requests`],
-  interview:[`Explain where TLS terminates in your design and why`, `Mention mTLS or a service mesh for service-to-service authentication`],
-  tryit:{note:'Pick a scenario and watch the client’s verification steps pass or fail.', mount:host => certChecker(host)},
-  sources:[`RFC 8446 (TLS 1.3)`, `RFC 8555 (ACME)`, `RFC 6962 (Certificate Transparency)`]
+  mistakes:[`Asking a customer to continue after the browser reports a wrong site name.`, `Forgetting to renew the food site certificate.`],
+  interview:[`Explain how the browser checks that it reached the food site.`, `Describe when the order starts traveling through the protected connection.`],
+  tryit:[{quiz:[
+    {q:'What does the browser check before trusting the food site?', options:['The restaurant menu color', 'The number of riders', 'The price of delivery', 'The certificate name and trusted issuer'], answer:3, why:'The certificate helps the browser verify the site it reached.'},
+    {q:'What does HTTPS protect for the order?', options:['Data while it travels through the TLS connection', 'Every stored copy forever', 'The rider’s phone battery', 'The restaurant’s opening hours'], answer:0, why:'TLS protects traffic in transit between the browser and the point where TLS ends.'}
+  ]}, {note:'Try a valid, expired, and wrong-name certificate. Watch the browser checks stop at different steps.', mount:host => certChecker(host)}],
+  sources:[`RFC 8446 (TLS 1.3)`, `Let’s Encrypt documentation`, `Chromium blog (2018)`]
 },
 {
   id:'rest-graphql-grpc', title:'REST vs GraphQL vs gRPC', minutes:10, tags:['REST','GraphQL','gRPC','protobuf','API style'],
-  summary:'REST: resources over HTTP, simple and cacheable. GraphQL: clients ask for exactly the fields they need. gRPC: fast, typed, binary RPC between services.',
-  problem:`<p>The Swiggy-style home screen needs your profile, ten restaurants with ratings and offers, and your active order. With naive REST that’s a dozen calls on a 4G phone, and the restaurant endpoint returns 60 fields when the screen needs 5. Meanwhile internal services exchange millions of small messages per second, where parsing JSON costs real CPU.</p>`,
-  intuition:`REST is ordering from a fixed menu — each dish has its own number. GraphQL is a buffet: one plate, filled with exactly what you want. gRPC is a factory’s pneumatic tubes between departments: very fast, strict canister sizes, and only between machines that agreed on the format.`,
+  summary:'REST offers named resources through HTTP. GraphQL lets a client ask for selected fields. gRPC gives services a shared, typed format for calling each other.',
+  problem:`<h3>A small example</h3><p>The food app opens a “My orders” screen on a mobile connection.</p><ul><li>Customer name</li><li>Five recent orders</li><li>Restaurant names for those orders</li></ul><p>How should the phone ask for these facts without too many trips or unnecessary data?</p>`,
+  intuition:`A restaurant can offer a fixed menu, let you name the items you want, or use a short staff order form in the kitchen. These are different ways to ask for the same meal.`,
   how:{
-    steps:[`<b>REST:</b> resources as URLs (<code>/users/42/orders</code>), HTTP verbs, status codes. Simple, cache-friendly (GET), universally supported. Risk: over-/under-fetching and many round trips.`, `<b>GraphQL:</b> one endpoint and a typed schema; the client sends a query naming exactly the fields it needs. Great for many different clients; caching and query cost control are harder.`, `<b>gRPC:</b> services defined in Protocol Buffers; generated clients; binary messages over HTTP/2; built-in deadlines and streaming. Ideal service-to-service; browsers need gRPC-Web.`, `Many companies combine them: GraphQL or REST at the edge, gRPC inside.`],
-    diagram:{title:'Same screen, two client strategies', w:780, h:280, alt:'A mobile app calls an API layer; with REST it makes several calls, with GraphQL one call that fans out internally via gRPC.',
-      nodes:[{id:'app', type:'client', label:'Mobile app', x:80, y:140}, {id:'gw', type:'lb', label:'API layer', x:290, y:140}, {id:'u', type:'service', label:'Users svc', x:540, y:50}, {id:'r', type:'service', label:'Restaurants svc', x:560, y:140, w:150}, {id:'o', type:'service', label:'Orders svc', x:540, y:230}],
+    intro:'<h3>What happens behind the scenes</h3><p>Compare ways to fetch the same order screen.</p>',
+    steps:[
+      {icon:'📨', title:'Name the request', text:'An API is the set of requests an app offers and the answers it returns.'},
+      {icon:'📚', title:'Use REST resources', text:'The phone can request customer, order, and restaurant records from separate URLs. A tailored REST endpoint could combine them.'},
+      {icon:'🧾', title:'Ask with GraphQL', text:'The phone sends one query naming only the fields this screen needs. The server gathers those fields.'},
+      {icon:'🔧', title:'Call with gRPC inside', text:'The order service can call another service using a shared message format. The phone does not need to use gRPC.'},
+      {icon:'⚖️', title:'Measure the choice', text:'Compare trips from the phone, bytes returned, and work done by the services.'}
+    ],
+    diagram:{title:'Three ways to fetch an order screen', w:780, h:280, alt:'The food app makes separate REST calls or one GraphQL call. Internal services may communicate using gRPC.',
+      nodes:[{id:'app', type:'client', label:'Food app', x:80, y:140}, {id:'gw', type:'lb', label:'API server', x:290, y:140}, {id:'u', type:'service', label:'Customer', x:540, y:50}, {id:'r', type:'service', label:'Restaurants', x:560, y:140, w:150}, {id:'o', type:'service', label:'Orders', x:540, y:230}],
       edges:[{from:'app', to:'gw'}, {from:'gw', to:'u'}, {from:'gw', to:'r'}, {from:'gw', to:'o'}],
       steps:[
-        {note:'<b>REST:</b> the app makes one call per resource — profile…', flow:[['app', 'gw', 'GET /me'], ['gw', 'u'], ['u', 'gw'], ['gw', 'app']], hl:['u']},
-        {note:'…restaurants (60 fields each, needs 5)…', flow:[['app', 'gw', 'GET /restaurants'], ['gw', 'r'], ['r', 'gw'], ['gw', 'app', '120 KB']], hl:['r']},
-        {note:'…and the active order. Three round trips on a mobile network.', flow:[['app', 'gw', 'GET /orders/active'], ['gw', 'o'], ['o', 'gw'], ['gw', 'app']], hl:['o']},
-        {note:'<b>GraphQL:</b> one query naming exact fields. The server fans out internally (often via <b>gRPC</b>, fast inside the datacentre) and returns one small response.', flow:[['app', 'gw', 'POST /graphql'], ['gw', 'u', 'gRPC'], ['gw', 'r', 'gRPC'], ['gw', 'o', 'gRPC']], parallel:true, hl:['gw']},
-        {note:'One round trip from the phone, ~4 KB instead of ~130 KB.', flow:[['gw', 'app', '4 KB JSON']], hl:['app']}
+        {note:'With separate REST URLs, the app asks for the customer.', flow:[['app', 'gw', 'GET /me'], ['gw', 'u'], ['u', 'gw'], ['gw', 'app']], hl:['u']},
+        {note:'It asks for restaurants linked to the orders.', flow:[['app', 'gw', 'GET /restaurants'], ['gw', 'r'], ['r', 'gw'], ['gw', 'app', 'many fields']], hl:['r']},
+        {note:'It asks for recent orders. Each phone call adds network waiting.', flow:[['app', 'gw', 'GET /orders'], ['gw', 'o'], ['o', 'gw'], ['gw', 'app']], hl:['o']},
+        {note:'GraphQL asks for selected fields in one phone call. Services may use gRPC inside.', flow:[['app', 'gw', 'POST /graphql'], ['gw', 'u', 'gRPC'], ['gw', 'r', 'gRPC'], ['gw', 'o', 'gRPC']], parallel:true, hl:['gw']},
+        {note:'The API server returns one answer shaped for this screen.', flow:[['gw', 'app', 'needed fields']], hl:['app']}
       ]},
-    html:`${h.code('http', `GET /v1/restaurants/88?fields=name,rating HTTP/1.1
-Host: api.example.com
-Authorization: Bearer eyJ...`, 'REST')}${h.code('graphql', `query HomeScreen {
-  me { name }
-  restaurants(near: {lat: 12.97, lng: 77.59}, first: 10) {
-    name rating offers { title }
-  }
-  activeOrder { status eta }
-}`, 'GraphQL')}${h.code('proto', `syntax = "proto3";
-service Restaurants {
-  rpc Get (GetRequest) returns (Restaurant);
-  rpc Nearby (NearbyRequest) returns (stream Restaurant); // server streaming
-}
-message Restaurant { int64 id = 1; string name = 2; float rating = 3; }`, 'gRPC (restaurants.proto)')}`,
-    deep:`<p><b>REST details:</b> GET, PUT and DELETE are idempotent; POST is not. Conditional requests (<code>ETag</code> + <code>If-None-Match</code>) make GETs cheap to revalidate. HATEOAS is rarely used in practice.</p><p><b>GraphQL details:</b> resolvers per field cause N+1 backend calls unless batched (DataLoader). Protect servers with depth/complexity limits and persisted queries; HTTP caching is harder because everything is a POST to one URL. Federation lets many teams contribute to one graph.</p><p><b>gRPC details:</b> protobuf evolves safely if you never reuse field numbers and only add optional fields. Deadlines propagate across calls so downstream work stops when the caller gives up. Because gRPC rides long-lived HTTP/2 connections, L4 load balancing pins all calls to one backend — use L7 (per-request) balancing or client-side balancing.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Ordering style', 'API style'], [['Ask for each menu item separately', 'Separate REST resource requests.'], ['Name only the items you need', 'One GraphQL query.'], ['Use a fixed staff order form', 'A typed gRPC call between services.']])}</div><div class="callout tip"><b>Important point</b><p>The API style alone does not make the screen fast. Count phone trips and server work.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Choice', 'Useful when'], [['REST', 'The phone needs a few clear resources.'], ['GraphQL', 'Different screens need different fields.'], ['gRPC', 'Internal services need a shared, strict message format.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say each phone round trip takes 100 ms. A plain REST screen asks for 1 customer, 1 order list, then 5 restaurants. If the phone sends these one at a time, that is 7 × 100 = 700 ms. If it sends the customer and orders together, then the 5 restaurants together, that is 2 × 100 = 200 ms. One GraphQL query or one tailored endpoint is 1 × 100 = 100 ms.</p><p>Inside the data center, say each database lookup takes 2 ms. Looking up each restaurant alone is 1 + 5 = 6 lookups, or 12 ms. Batching them is 2 lookups, or 4 ms.</p><h4>When it goes wrong</h4><p>GraphQL lets the client choose the shape. A query that nests orders inside restaurants inside orders can grow huge. Servers usually limit the query depth and cost.</p><p>REST reads use many URLs, and a cache can keep a copy of each. GraphQL often sends every query to one URL with POST, so a cache helps less. You will learn caches in Module 4.</p><h4>How it works inside</h4><p>In Protocol Buffers each field has a number. Say price is field 3. Adding a new field 4 is safe for old readers. Reusing 3 for something else is not.</p>`
   },
-  tradeoffs:{use:[`<b>REST:</b> public APIs, simple CRUD, cache-heavy reads`, `<b>GraphQL:</b> many client types with different data needs; aggregation for mobile`, `<b>gRPC:</b> internal service-to-service, low latency, streaming`], avoid:[`GraphQL for simple, cache-heavy public endpoints`, `gRPC directly from browsers without a proxy`, `Chatty REST from mobile with no aggregation`], alt:[`Backend-for-frontend endpoints`, `JSON-RPC for simple internal calls`, `Async events instead of synchronous calls where the caller doesn’t need an answer`]},
+  tradeoffs:{use:[`For the food app, REST works when the order screen needs a few clear requests.`, `GraphQL can help when mobile and web screens ask for different fields.`, `gRPC can give the company’s internal services a shared call format.`], avoid:[`Do not assume GraphQL makes the server perform fewer internal reads.`, `Do not make the phone call many small REST URLs when one tailored answer would serve the screen.`], alt:[`Add one REST endpoint shaped for the order screen before adopting another API style.`]},
   real:[
-    {co:'Facebook / Meta', tier:'confirmed', text:'Built GraphQL in 2012 for its mobile News Feed and open-sourced the specification in 2015.', src:'graphql.org history; Facebook Engineering (2015)'},
-    {co:'GitHub', tier:'confirmed', text:'Offers both a REST API and a GraphQL API (public since 2016), letting integrators fetch nested data in a single request.', src:'GitHub Docs'},
-    {co:'Google', tier:'confirmed', text:'Open-sourced gRPC in 2015 as the successor to its internal RPC system, Stubby.', src:'grpc.io; Google Developers blog (2015)'},
-    {co:'Netflix', tier:'confirmed', text:'Moved its API to a federated GraphQL architecture so domain teams own their parts of one unified graph.', src:'Netflix Tech Blog, “How Netflix Scales its API with GraphQL Federation” (2020)'}
+    {co:'GitHub', tier:'confirmed', text:'GitHub offers both REST and GraphQL APIs for clients with different data needs.', src:'GitHub API documentation'},
+    {co:'Google', tier:'confirmed', text:'Google open-sourced gRPC for service calls with a defined message format.', src:'gRPC documentation'}
   ],
-  mistakes:[`GraphQL without query cost limits (one query can scan the world)`, `N+1 resolvers without batching`, `Breaking protobuf compatibility by reusing field numbers`, `L4-balancing gRPC and wondering why one backend is hot`],
-  interview:[`Justify the API style per boundary: public edge vs internal`, `Mention pagination, auth and idempotency regardless of style`],
-  tryit:{note:'How many requests and bytes does one mobile screen cost with each approach?', mount:host => fetchCalc(host)},
-  sources:[`Roy Fielding, dissertation (2000), chapter 5 (REST)`, `GraphQL specification`, `grpc.io documentation`, `Netflix Tech Blog (2020)`]
+  mistakes:[`Choosing GraphQL while ignoring the work its field lookups create.`, `Treating three phone trips as unavoidable with REST.`],
+  interview:[`Compare phone trips and returned fields for the order screen.`, `Explain why an internal service might use gRPC while the phone uses REST or GraphQL.`],
+  tryit:[{quiz:[
+    {q:'Which style lets the phone name exactly the fields it wants?', options:['DNS', 'GraphQL', 'REST only', 'TCP'], answer:1, why:'A GraphQL query lists the requested fields.'},
+    {q:'Can REST return the whole order screen in one response?', options:['Only if UDP is used', 'Only with five databases', 'Yes, with a tailored endpoint', 'No, REST forbids it'], answer:2, why:'A REST endpoint can gather data for one screen when that is useful.'}
+  ]}, {note:'Compare separate REST calls, one tailored REST response, GraphQL, and gRPC in the order-screen calculator.', mount:host => fetchCalc(host)}],
+  sources:[`Roy Fielding, dissertation (2000)`, `GraphQL specification`, `gRPC documentation`, `GitHub API documentation`]
 },
 {
   id:'realtime-transports', title:'WebSockets, SSE, long polling and webhooks', minutes:10, tags:['WebSocket','SSE','long polling','webhooks','push'],
-  summary:'Four ways for a server to tell someone that something happened — and what each costs at a million open apps.',
-  problem:`<p>Food-delivery tracking: “Preparing → Picked up → Arriving”. If every app asks “any update?” every 2 seconds, 5 million open apps generate 2.5 million requests a second — almost all answered “no”. Ask every 60 seconds and updates feel late. How should the server push news?</p>`,
-  intuition:`<b>Short polling</b>: a kid asking “are we there yet?” every minute. <b>Long polling</b>: asking once, and the parent answers only when you arrive (then you ask again). <b>SSE</b>: a radio station — the server talks, you listen. <b>WebSocket</b>: a phone call — either side talks any time. <b>Webhook</b>: “call this number when it’s ready” — for servers, not phones.`,
+  summary:'Live updates can arrive through repeated requests or a connection kept open. SSE sends from server to app. WebSocket works both ways. Webhooks notify another server.',
+  problem:`<h3>A small example</h3><p>A customer watches a food order move from preparing to picked up to arriving.</p><ul><li>The phone needs new status soon.</li><li>Most seconds have no new status.</li><li>A restaurant partner also needs a delivery notice.</li></ul><p>How can the app and partner hear about changes without asking constantly?</p>`,
+  intuition:`A child can keep asking “Any news?” or wait for a parent to speak. A radio sends one-way updates. A phone call lets both sides talk.`,
   how:{
-    steps:[`<b>Short polling:</b> repeated requests on a timer. Trivial, but wasteful and delayed by up to one interval.`, `<b>Long polling:</b> the server holds the request open until there is news (or a timeout), then the client immediately re-asks. Near real-time over plain HTTP.`, `<b>SSE (Server-Sent Events):</b> one long-lived HTTP response streaming <code>text/event-stream</code>, server → client only, with automatic reconnect.`, `<b>WebSocket:</b> an HTTP connection upgraded to a full-duplex message channel. Both sides send whenever they want.`, `<b>Webhook:</b> server-to-server: your system POSTs to a URL the partner registered when an event occurs.`],
-    diagram:{title:'Who speaks first?', w:780, h:280, alt:'Client and server exchanging messages via polling, long polling, SSE and WebSocket; a server sends a webhook to a partner.',
-      nodes:[{id:'c', type:'client', label:'App', x:90, y:110}, {id:'s', type:'service', label:'Order service', x:420, y:110, w:140}, {id:'p', type:'ext', label:'Partner server', x:680, y:220, w:140}],
+    intro:'<h3>What happens behind the scenes</h3><p>Compare who starts each message and how long the connection stays open.</p>',
+    steps:[
+      {icon:'🔁', title:'Ask on a timer', text:'With short polling, the phone asks for status every few seconds. Many answers say nothing changed.'},
+      {icon:'⌛', title:'Wait for an answer', text:'With long polling, the server holds one request until status changes, then the phone asks again.'},
+      {icon:'📻', title:'Let the server speak', text:'SSE keeps one HTTP response open so the server can send order updates to the phone.'},
+      {icon:'📞', title:'Let both sides speak', text:'A WebSocket keeps a connection where the phone and server can both send messages.'},
+      {icon:'🏪', title:'Tell another server', text:'A webhook sends a new HTTP request to the restaurant partner’s server when an event happens.'}
+    ],
+    diagram:{title:'Order status through different transports', w:780, h:280, alt:'The food app asks for updates or holds a connection. The order server can also notify a partner server.',
+      nodes:[{id:'c', type:'client', label:'Food app', x:90, y:110}, {id:'s', type:'service', label:'Order server', x:420, y:110, w:140}, {id:'p', type:'ext', label:'Restaurant server', x:680, y:220, w:140}],
       edges:[{from:'c', to:'s'}, {from:'s', to:'p'}],
       steps:[
-        {note:'<b>Short polling:</b> “Any news?” “No.” “Any news?” “No.” …', flow:[['c', 's', 'any news?'], ['s', 'c', 'no'], ['c', 's', 'any news?'], ['s', 'c', 'no']], dur:650},
-        {note:'<b>Long polling:</b> the request waits on the server until something happens.', flow:[['c', 's', 'tell me when…']], dwell:1600},
-        {note:'Order picked up! The held request is answered at once; the app re-asks immediately.', flow:[['s', 'c', 'picked_up'], ['c', 's', 'tell me when…']], hl:['s']},
-        {note:'<b>SSE / WebSocket:</b> one long-lived connection; the server pushes events as they happen (and with WebSocket the app can send too).', flow:[['s', 'c', 'event: arriving'], ['s', 'c', 'event: delivered'], ['c', 's', 'ws: rate 5★']], hl:['c']},
-        {note:'<b>Webhook:</b> the server notifies a partner’s server with a signed HTTP POST; the partner replies 2xx or the call is retried.', flow:[['s', 'p', 'POST /hooks'], ['p', 's', '200']], hl:['p']}
+        {note:'Short polling asks again and again, even when nothing changed.', flow:[['c', 's', 'update?'], ['s', 'c', 'no'], ['c', 's', 'update?'], ['s', 'c', 'no']], dur:650},
+        {note:'Long polling leaves the request open while the order is unchanged.', flow:[['c', 's', 'tell me when']], dwell:1600},
+        {note:'When the rider picks up the order, the server answers. The app can ask again.', flow:[['s', 'c', 'picked up'], ['c', 's', 'tell me when']], hl:['s']},
+        {note:'SSE sends updates to the app. A WebSocket also lets the app send a message back.', flow:[['s', 'c', 'arriving'], ['s', 'c', 'delivered'], ['c', 's', 'thanks']], hl:['c']},
+        {note:'A webhook sends a new request to the restaurant server.', flow:[['s', 'p', 'delivered'], ['p', 's', 'received']], hl:['p']}
       ]},
-    html:h.table(['Technique', 'Direction', 'Connection', 'Typical use'], [['Short polling', 'client asks', 'new request each time', 'rare updates, simple dashboards'], ['Long polling', 'client asks, server delays', 'one held request per update', 'fallback when others are blocked'], ['SSE', 'server → client', 'one long HTTP response', 'feeds, notifications, LLM token streaming'], ['WebSocket', 'both ways', 'one upgraded TCP connection', 'chat, multiplayer, collaborative editing'], ['Webhook', 'server → server', 'one POST per event', 'payments, CI, integrations']]),
-    deep:`<p><b>WebSocket</b> starts as HTTP/1.1 with <code>Upgrade: websocket</code> and a <code>101 Switching Protocols</code> response (RFC 6455); RFC 8441 bootstraps WebSockets over HTTP/2. <b>SSE</b> reconnects automatically and sends <code>Last-Event-ID</code> so the server can resume; over HTTP/1.1 it is subject to the ~6 connections-per-host limit, which HTTP/2 removes.</p><p><b>Scaling persistent connections:</b> memory and file descriptors per connection, load-balancer idle timeouts (send heartbeats), sticky routing or a connection registry, and a pub/sub backbone (Redis, Kafka, NATS) so any server can deliver to the connection holder. Deploys must drain connections gradually to avoid reconnect storms.</p><p><b>Webhooks</b> need HMAC signatures (verify before trusting), timestamps against replay, retries with backoff, idempotent receivers (the same event may arrive twice) and no ordering assumptions.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Conversation', 'Order updates'], [['Ask “Any news?” repeatedly', 'Short polling.'], ['Wait for one answer', 'Long polling.'], ['Listen to a radio', 'SSE sends from server to app.'], ['Talk on a phone', 'WebSocket works both ways.'], ['Call another business', 'Webhook reaches a partner server.']])}</div><div class="callout tip"><b>Important point</b><p>Choose by who needs to speak and how often updates happen.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Need', 'Useful choice'], [['Rare order updates', 'Long polling or a modest timer.'], ['Frequent one-way status', 'SSE.'], ['Customer chat with rider', 'WebSocket.'], ['Notify a restaurant system', 'Webhook.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say an order lasts 40 minutes, which is 2,400 seconds. With short polling every 5 seconds, the phone asks 2,400 ÷ 5 = 480 times. If the status changes 4 times, 476 answers say nothing new. An update waits 2.5 seconds on average and up to 5 seconds. SSE uses 1 connection and sends 4 messages.</p><p>The price of a held connection is memory. Say each costs 10 KB. For 100,000 waiting customers, that is 100,000 × 10 KB = 1,000,000 KB, about 1 GB.</p><h4>When it goes wrong</h4><p>A phone in a tunnel drops its SSE connection. SSE lets the browser send the ID of the last message it got. The server can then resend the ones it missed.</p><p>Say the restaurant partner is down, and the company retries a webhook after 1, 5 and 30 minutes. The partner may get the same event up to 4 times. Each event needs an ID so the partner can skip repeats.</p>`
   },
-  tradeoffs:{use:[`<b>SSE</b> for one-way streams (notifications, live scores, LLM output)`, `<b>WebSocket</b> for interactive two-way (chat, games, co-editing)`, `<b>Webhooks</b> for cross-company server notifications`], avoid:[`Short polling at high frequency for millions of clients`, `WebSockets when one-way SSE would do (more complex infra)`, `Trusting unsigned webhooks`], alt:[`Mobile push notifications (APNs/FCM) when the app is in the background`, `MQTT for constrained IoT devices`]},
+  tradeoffs:{use:[`For food order status, use SSE when the server only sends updates to the open app.`, `Use WebSocket when the customer and rider also need to exchange live messages.`, `Use a webhook when the restaurant’s server needs an event.`], avoid:[`Do not ask millions of open apps every two seconds when updates are rare.`, `Do not assume a webhook will be delivered only once.`], alt:[`For a simple first version with few customers, a slower polling interval may be enough.`]},
   real:[
-    {co:'Slack', tier:'confirmed', text:'Delivers real-time events to clients and apps over WebSockets (e.g. the RTM API and Socket Mode).', src:'Slack API documentation'},
-    {co:'OpenAI & Anthropic APIs', tier:'confirmed', text:'Stream generated tokens to clients using server-sent events when streaming is enabled.', src:'OpenAI and Anthropic API documentation'},
-    {co:'Stripe', tier:'confirmed', text:'Sends webhooks signed with a <code>Stripe-Signature</code> header and, in live mode, retries failed deliveries with exponential backoff for up to three days.', src:'Stripe webhooks documentation'}
+    {co:'Slack', tier:'confirmed', text:'Slack documents WebSocket connections for apps that receive live events.', src:'Slack API documentation'},
+    {co:'Stripe', tier:'confirmed', text:'Stripe sends signed webhooks to a business server when payment events happen.', src:'Stripe webhooks documentation'}
   ],
-  mistakes:[`No heartbeats → load balancers silently drop idle connections`, `All clients reconnecting at once after a deploy (add jitter)`, `Webhook receivers that aren’t idempotent`, `Assuming webhook events arrive in order`],
-  interview:[`Pick the transport by direction and frequency; justify with connection counts`, `Explain how a message reaches a user connected to a different server (pub/sub)`],
-  tryit:{note:'Random order-status events arrive. Compare requests made and delivery delay for each technique.', mount:host => transportSim(host)},
-  sources:[`RFC 6455 (WebSocket)`, `HTML Living Standard — Server-sent events`, `Slack, Stripe, OpenAI and Anthropic API documentation`]
+  mistakes:[`Choosing a two-way channel when the open food app only receives status.`, `Ignoring duplicate webhook deliveries to the restaurant.`],
+  interview:[`Choose one transport for order status and one for customer chat.`, `Show how polling every two seconds makes 2.5 million requests each second at five million open apps.`],
+  tryit:[{quiz:[
+    {q:'Which choice sends one-way updates over a held HTTP response?', options:['Webhook', 'DNS', 'TCP alone', 'SSE'], answer:3, why:'SSE lets the server stream updates to the app.'},
+    {q:'Which choice notifies a restaurant’s server about an event?', options:['Webhook', 'Short polling on every phone', 'A browser tab title', 'A DNS lookup'], answer:0, why:'A webhook is a request from one server to another.'}
+  ]}, {note:'Change the order-status event rate and polling interval. Compare request count and delivery delay.', mount:host => transportSim(host)}],
+  sources:[`RFC 6455 (WebSocket)`, `HTML Living Standard, Server-sent events`, `Slack API documentation`, `Stripe webhooks documentation`]
 },
 {
   id:'api-design', title:'API design: versioning, pagination, errors, OpenAPI', minutes:10, tags:['API design','versioning','pagination','cursor','problem+json','OpenAPI'],
-  summary:'An API is a contract. Add freely, break rarely, paginate with cursors, return consistent errors, and describe it all in an OpenAPI spec.',
-  problem:`<p>Your public v1 API returns <code>price</code> as a floating-point rupee value. A large partner has integrated. Now you need integer paise, stable pagination for a feed that changes every second, and consistent errors. Change it carelessly and 300 partner apps break overnight.</p>`,
-  intuition:`An API is like a railway timetable: people plan their lives around it. You can add new trains (additive changes) any time. Cancelling or moving one (a breaking change) needs notice, a new timetable version, and a long overlap while both run.`,
+  summary:'An API is a promise about requests and answers. Versions protect old clients, pagination divides long lists, errors explain failures, and OpenAPI records the promise.',
+  problem:`<h3>A small example</h3><p>A restaurant partner reads new food orders through the app’s API. The company needs to improve that API.</p><ul><li>The old response has a price in rupees.</li><li>New orders arrive while the partner reads pages.</li><li>Invalid requests need clear errors.</li></ul><p>How can the API change without surprising the partner’s software?</p>`,
+  intuition:`An API is like a published menu. Customers know the names, prices, and rules. Adding an option is easy to accept. Changing a familiar item without warning breaks their plans.`,
   how:{
-    steps:[`<b>Resources</b> as plural nouns (<code>/orders/{id}/items</code>), verbs from HTTP, precise status codes (201 created, 400 bad input, 401/403, 404, 409 conflict, 422, 429, 5xx).`, `<b>Additive changes</b> (new optional fields, new endpoints) are safe. <b>Breaking changes</b> (rename, remove, change type or meaning) need a new version.`, `<b>Versioning</b>: in the path (<code>/v2/</code>), a header, or date-based versions pinned per client.`, `<b>Pagination</b>: offset/limit is simple but slow at depth and wrong when data changes; <b>cursor</b> (keyset) pagination is stable and fast.`, `<b>Errors</b>: one consistent shape with a machine-readable code (RFC 9457 <code>application/problem+json</code>).`, `<b>Money</b> as integers in minor units (paise), <b>times</b> as ISO-8601 UTC.`, `Describe everything in <b>OpenAPI</b> — the source for docs, client SDKs, mocks and contract tests.`],
+    intro:'<h3>What happens behind the scenes</h3><p>Keep the old restaurant partner working while the order API improves.</p>',
+    steps:[
+      {icon:'📨', title:'Name the contract', text:'A request such as GET /orders asks for a list. The response names fields and their meanings.'},
+      {icon:'➕', title:'Add before replacing', text:'Add price_paise beside the old price field. Test that old partner software still reads the answer.'},
+      {icon:'📄', title:'Page the list', text:'Return a few orders at a time. A cursor marks the last order seen so new orders do not shift the next page.'},
+      {icon:'⚠️', title:'Make errors clear', text:'Use a suitable HTTP status and a steady error shape when the partner sends a bad request.'},
+      {icon:'📘', title:'Publish the contract', text:'OpenAPI is a machine-readable description of the requests, fields, and responses partners can use.'}
+    ],
     stepper:{title:'Evolving an API without breaking anyone', items:[
-      {title:'Add', tag:'non-breaking', text:'Add <code>price_paise</code> (integer) alongside the old <code>price</code>. Old clients ignore unknown fields.'},
-      {title:'Announce', tag:'deprecate', text:'Document the old field as deprecated; send <code>Deprecation</code> and <code>Sunset</code> headers (RFC 8594) with a date.'},
-      {title:'Measure', tag:'telemetry', text:'Track which API keys still read the old field or call the old version. Contact them directly.'},
-      {title:'Version', tag:'if breaking', text:'For true breaking changes, ship v2 (or a new date version) and run both side by side.'},
-      {title:'Migrate', tag:'help', text:'SDK updates, changelogs, migration guides, sandbox testing.'},
-      {title:'Remove', tag:'after sunset', text:'Only after usage is near zero and the sunset date has passed.'}
+      {title:'Add', tag:'new field', text:'Return price_paise as an integer beside the existing price field.'},
+      {title:'Announce', tag:'give notice', text:'Tell partners the old price field will stop being supported later.'},
+      {title:'Measure', tag:'check use', text:'Find which partners still depend on the old field or API version.'},
+      {title:'Version', tag:'breaking change', text:'If the old meaning must change, offer a new version while the old one still works.'},
+      {title:'Help partners move', tag:'migration', text:'Share an example response and time to update their code.'},
+      {title:'Remove', tag:'after notice', text:'Remove the old behavior only after the promised change period.'}
     ]},
-    html:`${h.code('sql', `-- Offset: the database still reads and discards 100,000 rows
-SELECT * FROM posts ORDER BY created_at DESC, id DESC LIMIT 20 OFFSET 100000;
-
--- Cursor (keyset): jumps straight to the right place using the index
-SELECT * FROM posts
-WHERE (created_at, id) < ($cursor_created_at, $cursor_id)
-ORDER BY created_at DESC, id DESC
-LIMIT 20;`, 'pagination.sql')}${h.code('json', `HTTP/1.1 422 Unprocessable Content
-Content-Type: application/problem+json
-
-{
-  "type": "https://api.example.com/problems/insufficient-balance",
-  "title": "Insufficient wallet balance",
-  "status": 422,
-  "detail": "Wallet has 12000 paise; order needs 49900.",
-  "instance": "/orders/ord_81f2",
-  "code": "INSUFFICIENT_BALANCE"
-}`, 'RFC 9457 error body')}${h.code('yaml', `openapi: 3.1.0
-info: { title: Orders API, version: "2024-06-01" }
-paths:
-  /orders:
-    get:
-      parameters:
-        - { name: cursor, in: query, schema: { type: string } }
-        - { name: limit,  in: query, schema: { type: integer, maximum: 100 } }
-      responses:
-        "200":
-          description: A page of orders
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/OrderPage" }`, 'openapi.yaml')}`,
-    deep:`<p><b>Cursors</b> should be opaque (e.g. base64 of the last sort key) so you can change their internals, and must include a unique tie-breaker (<code>id</code>) when the sort column isn’t unique. Total counts on huge tables are expensive — return <code>has_more</code> instead.</p><p><b>Compatibility discipline:</b> clients must be <i>tolerant readers</i> (ignore unknown fields, don’t depend on field order). Use consumer-driven contract tests (e.g. Pact) and spec linting (e.g. Spectral) in CI to catch breaking changes before release. Date-based versioning lets each client stay pinned to the behaviour it integrated against while the provider ships continuously, translating responses between versions internally.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Published menu', 'Order API'], [['Add an optional dish', 'Add a field old clients can ignore.'], ['Rename a familiar dish', 'Give partners a new version.'], ['Print a new menu', 'Update the OpenAPI description.']])}</div><div class="callout tip"><b>Important point</b><p>An API change is safe only when existing clients can still understand the answer they receive.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Need', 'Choice'], [['Many changing orders', 'Use a cursor for the next page.'], ['Bad request', 'Send one clear error shape and status.'], ['Change field meaning', 'Offer a new version and migration time.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say each page holds 20 orders and the partner has read page 1, which was orders 1 to 20. Then 3 new orders arrive at the top. Old orders 18, 19 and 20 move to places 21, 22 and 23. Page 2 with offset 20 starts at place 21. So the partner sees orders 18, 19 and 20 a second time. A cursor that says "after order 20" avoids this.</p><p>Offsets also cost more as they grow. For "skip 100,000", the database may step past 100,000 rows first. A cursor can jump straight to its spot using an index. You will learn indexes in Module 5.</p><h4>When it goes wrong</h4><p>Floating-point numbers cannot store every decimal exactly. In many languages 0.1 + 0.2 gives 0.30000000000000004. So send ₹499 as 49,900 paise, a whole number.</p><p>When you add price_paise, keep the old price field for a stated time, say 6 months, and tell partners the end date.</p>`
   },
-  tradeoffs:{use:[`<b>Cursor pagination</b> for feeds, large or fast-changing collections`, `<b>Offset</b> for small, stable lists where “jump to page 7” matters (admin tables)`, `<b>URI versions</b> for simplicity; <b>date versions</b> for continuously evolving public APIs`], avoid:[`Breaking changes without a version and a sunset period`, `Float money`, `Different error shapes per endpoint`], alt:[`GraphQL schema evolution with field deprecation`, `gRPC/protobuf field-number based evolution`]},
+  tradeoffs:{use:[`For the restaurant’s changing order list, a cursor helps the partner continue after the last order it saw.`, `Add price_paise while keeping the old price field for partners still using it.`], avoid:[`Do not change the meaning of price in place and surprise old partner code.`, `Do not return unrelated error shapes for the same kind of bad request.`], alt:[`For a short, stable restaurant list, numbered pages may be simpler than cursors.`]},
   real:[
-    {co:'Stripe', tier:'confirmed', text:'Uses date-based API versions; each account is pinned to the version it integrated with, and requests can override it with the <code>Stripe-Version</code> header.', src:'Stripe API documentation — versioning'},
-    {co:'Slack', tier:'confirmed', text:'Moved its Web API from offset/page-based to cursor-based pagination to keep results consistent and performant on large, changing collections.', src:'Slack Engineering, “Evolving API Pagination at Slack” (2017)'},
-    {co:'GitHub', tier:'confirmed', text:'Versions its REST API by date via the <code>X-GitHub-Api-Version</code> header (first version 2022-11-28).', src:'GitHub Docs — API versions'}
+    {co:'Stripe', tier:'confirmed', text:'Stripe documents dated API versions so existing integrations can keep the behavior they expect.', src:'Stripe API versioning documentation'},
+    {co:'Slack', tier:'confirmed', text:'Slack documents cursor pagination for clients reading long lists.', src:'Slack API pagination documentation'}
   ],
-  mistakes:[`Offset pagination on a live feed (duplicates and skips)`, `Removing fields without deprecation telemetry`, `200 OK with an error inside the body`, `Exposing internal database IDs or structure as the contract`],
-  interview:[`Mention cursor pagination, idempotency keys and versioning when you write the API section`, `Use precise status codes and a consistent error body`],
-  tryit:{note:'Read a feed page by page while new posts arrive. Watch offset pagination duplicate and skip items.', mount:host => paginationDemo(host)},
-  sources:[`RFC 9457 (Problem Details)`, `RFC 8594 (Sunset header)`, `OpenAPI Specification 3.1`, `Slack Engineering (2017)`, `Stripe API docs`]
+  mistakes:[`Removing price before partners have moved to price_paise.`, `Using numbered offsets for a changing order list without checking for repeats.`],
+  interview:[`Show one safe field addition and one change that needs a version.`, `Explain how a cursor continues an order list after new orders arrive.`],
+  tryit:[{quiz:[
+    {q:'What is a safer first step before replacing price with price_paise?', options:['Stop all partner requests', 'Add price_paise beside price', 'Remove price without notice', 'Change price into a string'], answer:1, why:'Old partners can keep using price while they move to the new field.'},
+    {q:'What does a cursor mark in the changing order list?', options:['The customer password', 'The HTTP version', 'The last order already seen', 'The total restaurant count'], answer:2, why:'The next page can continue after that order.'}
+  ]}, {note:'Read order pages, add new orders at the top, and compare numbered offsets with a cursor.', mount:host => paginationDemo(host)}],
+  sources:[`OpenAPI Specification`, `Slack API pagination documentation`, `Stripe API versioning documentation`]
 },
 {
   id:'idempotency-rate-limit-headers', title:'Idempotency keys, safe retries and rate-limit headers', minutes:9, tags:['idempotency','retries','429','Retry-After','rate limit headers'],
-  summary:'Networks lose responses, so clients retry. Idempotency keys make retries safe; rate-limit headers tell clients how fast they may go.',
-  problem:`<p>A user taps <strong>Pay ₹499</strong>. The request reaches your server and the charge succeeds — but the response is lost in a tunnel. The app retries. Without protection, the customer pays twice. Separately, a partner’s script hammers your API: how do you tell it, politely and precisely, to slow down?</p>`,
-  intuition:`An idempotency key is the token number at a sweet shop: come back with the same token and they hand you the same packed box instead of packing a new one. Rate-limit headers are the parking meter’s display: how many minutes you have left and when it resets.`,
+  summary:'A retry may repeat an action when its first answer is lost. An idempotency key lets the server recognize that repeat. Response headers can tell a busy client when to try again.',
+  problem:`<h3>A small example</h3><p>A customer pays ₹499 for a food order. The charge succeeds, but the phone loses the answer in a tunnel.</p><ul><li>The payment request reached the server.</li><li>The success response did not reach the phone.</li><li>The phone may send the request again.</li></ul><p>How can the app retry without charging twice, and know when to slow down?</p>`,
+  intuition:`A shop gives you one token for an order. Returning with the same token gets the same receipt, not a second order. A “come back in 12 seconds” sign tells you when to try again.`,
   how:{
-    steps:[`GET, PUT and DELETE are <b>idempotent</b> by definition — repeating them has the same effect. POST is not.`, `For POSTs that change money or state, the client generates a unique <b>Idempotency-Key</b> (e.g. a UUID) per logical operation and reuses it on every retry.`, `The server stores key → (request fingerprint, status, response) <b>atomically with the side effect</b>. A retry with the same key returns the stored response without re-executing.`, `Same key with a different body → reject (409/422). A concurrent duplicate while the first is still running → 409 or wait.`, `Keys expire after a window (e.g. 24 hours).`, `For rate limits, return <b>429 Too Many Requests</b> with <code>Retry-After</code> and headers for limit, remaining and reset. Well-behaved clients back off with jitter.`],
-    diagram:{title:'Retry with an idempotency key', w:740, h:210, alt:'App posts a payment; the response is lost; the retry with the same key returns the stored result.',
-      nodes:[{id:'a', type:'client', label:'App', x:80, y:105}, {id:'s', type:'service', label:'Payments API', x:360, y:105}, {id:'d', type:'db', label:'Ledger + keys', x:640, y:105}],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow one payment that succeeds before its answer is lost.</p>',
+    steps:[
+      {icon:'🎫', title:'Give the payment a key', text:'The phone creates one unique idempotency key for this ₹499 payment. It keeps that key for any retry.'},
+      {icon:'💳', title:'Record the charge', text:'The server records the payment and key together, then sends a success response.'},
+      {icon:'📵', title:'Lose the response', text:'The phone never sees the answer. It cannot know whether the charge happened.'},
+      {icon:'🔁', title:'Retry the same action', text:'The phone sends the same request and key. The server finds the key and returns the earlier result.'},
+      {icon:'⏳', title:'Wait when asked', text:'If an API answers 429 with Retry-After, the caller waits the stated time before sending another request.'}
+    ],
+    diagram:{title:'One charge despite a lost answer', w:740, h:210, alt:'The food app sends a payment with one key. Its first answer is lost, so it retries with the same key and gets the stored result.',
+      nodes:[{id:'a', type:'client', label:'Food app', x:80, y:105}, {id:'s', type:'service', label:'Payment server', x:360, y:105}, {id:'d', type:'db', label:'Charges + keys', x:640, y:105}],
       edges:[{from:'a', to:'s'}, {from:'s', to:'d'}],
       steps:[
-        {note:'POST /payments with <code>Idempotency-Key: 7f3a…</code>. The API inserts the charge <b>and</b> the key in one transaction.', flow:[['a', 's', 'POST + key'], ['s', 'd', 'BEGIN; charge; key; COMMIT']], hl:['d']},
-        {note:'The response is <b>lost</b> on the way back.', flow:[['d', 's'], ['s', 'a', '✗ lost']], status:{a:'hot'}},
-        {note:'The app times out and retries with the <b>same key</b>.', status:{a:'ok'}, flow:[['a', 's', 'POST + same key']], hl:['s']},
-        {note:'The key exists → return the stored <b>201</b> response. No second charge.', flow:[['s', 'd', 'key?'], ['d', 's', 'seen'], ['s', 'a', '201 (stored)']], hl:['a']}
+        {note:'The app sends the payment and one key. The server stores both with the charge.', flow:[['a', 's', 'pay + key'], ['s', 'd', 'charge + key']], hl:['d']},
+        {note:'The success response is lost on the way to the phone.', flow:[['d', 's'], ['s', 'a', 'lost']], status:{a:'hot'}},
+        {note:'The app retries the same payment with the same key.', status:{a:'ok'}, flow:[['a', 's', 'same key']], hl:['s']},
+        {note:'The server returns the stored result. It does not charge again.', flow:[['s', 'd', 'key?'], ['d', 's', 'seen'], ['s', 'a', 'same result']], hl:['a']}
       ]},
-    html:`${h.code('ts', `// Express-style handler (simplified). Assumes a UNIQUE index on idempotency_keys(account_id, key).
-app.post('/payments', async (req, res) => {
-  const key = req.header('Idempotency-Key');
-  if (!key) return res.status(400).json({ code: 'IDEMPOTENCY_KEY_REQUIRED' });
-  const fingerprint = sha256(JSON.stringify(req.body));
-
-  const result = await db.tx(async (tx) => {
-    const prior = await tx.oneOrNone(
-      'SELECT fingerprint, status, body FROM idempotency_keys WHERE account_id=$1 AND key=$2 FOR UPDATE',
-      [req.accountId, key]);
-    if (prior) {
-      if (prior.fingerprint !== fingerprint) return { status: 422, body: { code: 'KEY_REUSED_WITH_DIFFERENT_BODY' } };
-      return { status: prior.status, body: prior.body };          // replay: same answer, no new charge
-    }
-    const payment = await chargeAndRecord(tx, req.accountId, req.body); // side effect inside the same tx
-    const body = { id: payment.id, status: 'succeeded' };
-    await tx.none('INSERT INTO idempotency_keys(account_id, key, fingerprint, status, body, expires_at) VALUES ($1,$2,$3,201,$4, now() + interval \\'24 hours\\')',
-      [req.accountId, key, fingerprint, body]);
-    return { status: 201, body };
-  });
-  res.status(result.status).json(result.body);
-});`, 'idempotent-payments.ts')}${h.code('http', `HTTP/1.1 429 Too Many Requests
-Retry-After: 12
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 0
-X-RateLimit-Reset: 1718000000`, 'rate-limited response')}`,
-    deep:`<p><b>Atomicity is everything:</b> if the key is saved separately from the side effect, a crash between the two re-opens the double-charge window. Store both in one transaction, or record the key first in an <i>in-progress</i> state, then complete it. When the side effect is an external call (a bank), pass your own idempotency key downstream too.</p><p><b>At-least-once delivery + idempotent processing = effectively-once</b> — the same idea powers queue consumers (Module 7). Scope keys per account so one client can’t probe another’s keys.</p><p><b>Rate-limit headers:</b> <code>X-RateLimit-*</code> is a widespread convention; the IETF HTTPAPI working group has drafted standard <code>RateLimit</code> and <code>RateLimit-Policy</code> fields, and an <code>Idempotency-Key</code> header field. <code>Retry-After</code> (seconds or an HTTP date) is standard.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['At the shop', 'Payment API'], [['Bring back the same token', 'Retry with the same key.'], ['Show the earlier receipt', 'Return the stored payment result.'], ['Come back after 12 seconds', 'Honor Retry-After: 12.']])}</div><div class="callout tip"><b>Important point</b><p>One key belongs to one payment attempt, including every retry of that attempt.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['What the caller sees', 'What it should do'], [['No answer after paying', 'Retry with the same key.'], ['Earlier result for that key', 'Show the saved outcome.'], ['429 with Retry-After', 'Wait, then send again.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Without a key, the lost answer means 2 charges. 2 × ₹499 = ₹998 instead of ₹499. With a key, the second request returns the saved result and the total stays ₹499.</p><p>Storing keys costs space. Say 100,000 payments each day, and each saved key and result takes 1 KB. That is 100,000 × 1 KB = 100,000 KB, about 100 MB each day.</p><h4>When it goes wrong</h4><p>Say the phone retries while the first request is still running. Two requests with one key arrive together. Only one may charge. The database can refuse a second record with the same key, so one request wins and the other waits or gets an error. You will learn databases in Module 5.</p><p>If a request reuses a key with a different amount, return an error. Do not return the old result.</p><h4>How it works inside</h4><p>HTTP says GET, PUT and DELETE are safe to repeat. POST is not. A payment is usually a POST, so it needs a key.</p><p>If 1,000 clients are all told Retry-After: 12, they all return at second 12. A random extra wait of 0 to 3 seconds spreads them out.</p>`
   },
-  tradeoffs:{use:[`Idempotency keys on every POST that moves money, sends messages or creates orders`, `Rate-limit headers on any public or partner API`], avoid:[`Generating a new key per retry (defeats the purpose)`, `Storing keys outside the side-effect transaction`, `Retrying non-idempotent calls blindly`], alt:[`Natural idempotency: client-generated resource IDs with PUT`, `Deduplicating by a business key (order number) with a unique constraint`]},
+  tradeoffs:{use:[`For the food payment, reuse one key when the phone retries after losing the answer.`, `For a partner making too many requests, return 429 and a wait time it can follow.`], avoid:[`Do not generate a new payment key for each retry.`, `Do not save the key separately after the charge has already committed.`], alt:[`A unique order number can also help identify a repeated business action when the server enforces it.`]},
   real:[
-    {co:'Stripe', tier:'confirmed', text:'Accepts an <code>Idempotency-Key</code> header on POST requests and returns the saved result for retries with the same key; keys may be removed after they are at least 24 hours old.', src:'Stripe API documentation — idempotent requests'},
-    {co:'GitHub', tier:'confirmed', text:'Returns <code>x-ratelimit-limit</code>, <code>-remaining</code>, <code>-used</code> and <code>-reset</code> headers; authenticated REST requests are typically limited to 5,000 per hour.', src:'GitHub Docs — rate limits for the REST API'},
-    {co:'IETF', tier:'confirmed', text:'The HTTPAPI working group has Internet-Drafts standardising an <code>Idempotency-Key</code> header field and <code>RateLimit</code> header fields.', src:'IETF HTTPAPI working group drafts'}
+    {co:'Stripe', tier:'confirmed', text:'Stripe documents an Idempotency-Key header so clients can retry a request without repeating its effect.', src:'Stripe API documentation, Idempotent requests'},
+    {co:'GitHub', tier:'confirmed', text:'GitHub returns headers that tell API clients about their remaining request allowance.', src:'GitHub REST API rate limit documentation'}
   ],
-  mistakes:[`New key per retry`, `Key stored after the response is sent`, `Retry storms: clients ignoring Retry-After and retrying instantly`, `Treating 429 as an error to alert on instead of a signal to slow down`],
-  interview:[`Any payments or ordering design: say “idempotency key” early and explain where it is stored`, `Pair retries with exponential backoff, jitter and rate-limit awareness`],
-  tryit:{note:'Pay with a flaky network, with and without an idempotency key. Then trip a rate limit and read the headers.', mount:(host, api) => idemDemo(host, api)},
-  sources:[`Stripe API docs — idempotent requests`, `RFC 6585 (429 status)`, `IETF HTTPAPI drafts: Idempotency-Key, RateLimit header fields`]
+  mistakes:[`Using a new key after the first payment answer is lost.`, `Ignoring Retry-After and sending another request immediately.`],
+  interview:[`Explain where the food payment key is saved and why the save must accompany the charge.`, `Explain what a client does after a 429 response with Retry-After.`],
+  tryit:[{quiz:[
+    {q:'Which key should the phone use when it retries the same food payment?', options:['A new key for every retry', 'No key after a timeout', 'The restaurant name', 'The same key'], answer:3, why:'The server recognizes the same logical payment by its key.'},
+    {q:'What should a client do after 429 with Retry-After: 12?', options:['Wait about 12 seconds before another request', 'Retry twelve times at once', 'Change the payment amount', 'Delete the order'], answer:0, why:'Retry-After tells the client how long to wait.'}
+  ]}, {note:'Pay with a lost response, first without a key and then with one. Send requests until the API says 429 and read its wait time.', mount:(host, api) => idemDemo(host, api)}],
+  sources:[`Stripe API documentation, Idempotent requests`, `RFC 6585`, `GitHub REST API rate limit documentation`]
 },
 {
   id:'proxies-gateway-bff', title:'Forward proxy, reverse proxy, API gateway and BFF', minutes:8, tags:['proxy','reverse proxy','API gateway','BFF','Envoy'],
-  summary:'Proxies sit in the middle. Forward proxies act for clients; reverse proxies act for servers; API gateways add policy; BFFs tailor APIs per client type.',
-  problem:`<p>Your mobile app, web app and partner API all call 25 microservices directly. Every service re-implements TLS, auth, rate limiting and logging; the mobile app makes 14 calls per screen; partners can see internal service names. You need a front door — and maybe more than one.</p>`,
-  intuition:`A forward proxy is your office’s front desk making outside calls on your behalf (outsiders see the desk, not you). A reverse proxy is a hotel reception receiving every visitor and sending them to the right room (visitors never see the corridors). An API gateway is reception plus security check, visitor log and “maximum ten visitors an hour”. A BFF is a personal concierge per guest type who assembles exactly what that guest needs.`,
+  summary:'A proxy passes a request between two sides. A reverse proxy receives requests for servers. An API gateway adds shared API rules, while a BFF shapes answers for one kind of app.',
+  problem:`<h3>A small example</h3><p>The food company has a phone app and a website. Both need orders, restaurants, and customer details.</p><ul><li>The phone needs a short home-screen answer.</li><li>The website needs more detail.</li><li>Internal services should not be exposed directly.</li></ul><p>Which middle parts can receive requests and give each client a useful answer?</p>`,
+  intuition:`A hotel reception sends guests to the right room. A concierge prepares a different plan for a family and a business traveler. A company office may also use a desk to make calls outward.`,
   how:{
-    steps:[`<b>Forward proxy:</b> sits in front of clients; controls and logs outbound traffic, caches, hides client identity (corporate proxies, egress filtering).`, `<b>Reverse proxy:</b> sits in front of servers; TLS termination, load balancing, compression, caching, hiding internal topology (Nginx, HAProxy, Envoy).`, `<b>API gateway:</b> a reverse proxy specialised for APIs: authentication, rate limits, routing by path/version, request/response transformation, quotas, analytics.`, `<b>BFF (Backend for Frontend):</b> one thin backend per client type (mobile, web, TV) that aggregates services into screen-shaped responses; owned by the frontend team.`, `Keep business logic <b>out</b> of the gateway; it should stay a thin, highly available policy layer.`],
-    diagram:{title:'North-south traffic through the front door', w:800, h:300, alt:'Mobile and web clients call their own BFFs through an API gateway into services; an office network reaches the internet via a forward proxy.',
-      nodes:[{id:'m', type:'client', label:'Mobile app', x:70, y:70}, {id:'w', type:'client', label:'Web app', x:70, y:200}, {id:'gw', type:'lb', label:'API gateway', x:240, y:135}, {id:'bm', type:'service', label:'Mobile BFF', x:420, y:70}, {id:'bw', type:'service', label:'Web BFF', x:420, y:200}, {id:'s1', type:'service', label:'Orders', x:640, y:60, w:110}, {id:'s2', type:'service', label:'Catalog', x:640, y:140, w:110}, {id:'s3', type:'service', label:'Users', x:640, y:220, w:110}, {id:'fp', type:'ext', label:'Forward proxy', x:420, y:275, w:130, h:40}],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow requests into and out of the food company.</p>',
+    steps:[
+      {icon:'🚪', title:'Receive outside requests', text:'A reverse proxy stands in front of the company’s servers and passes each request inward.'},
+      {icon:'🛂', title:'Apply shared API rules', text:'An API gateway can check a caller and route its request to the right internal part.'},
+      {icon:'📱', title:'Shape the phone answer', text:'A mobile BFF, or backend for frontend, gathers the small set of facts the phone screen needs.'},
+      {icon:'💻', title:'Shape the website answer', text:'A web BFF can gather a different set of facts for the larger website screen.'},
+      {icon:'📤', title:'Control calls outward', text:'A forward proxy can carry an internal service’s request to an outside SMS provider.'}
+    ],
+    diagram:{title:'Middle parts in the food app', w:800, h:300, alt:'Phone and web requests enter an API gateway and reach their own BFFs. An internal service calls outward through a forward proxy.',
+      nodes:[{id:'m', type:'client', label:'Food phone app', x:70, y:70}, {id:'w', type:'client', label:'Food website', x:70, y:200}, {id:'gw', type:'lb', label:'API gateway', x:240, y:135}, {id:'bm', type:'service', label:'Phone BFF', x:420, y:70}, {id:'bw', type:'service', label:'Web BFF', x:420, y:200}, {id:'s1', type:'service', label:'Orders', x:640, y:60, w:110}, {id:'s2', type:'service', label:'Restaurants', x:640, y:140, w:110}, {id:'s3', type:'service', label:'Customers', x:640, y:220, w:110}, {id:'fp', type:'ext', label:'Forward proxy', x:420, y:275, w:130, h:40}],
       edges:[{from:'m', to:'gw'}, {from:'w', to:'gw'}, {from:'gw', to:'bm'}, {from:'gw', to:'bw'}, {from:'bm', to:'s1'}, {from:'bm', to:'s2'}, {from:'bw', to:'s2'}, {from:'bw', to:'s3'}, {from:'s3', to:'fp', dashed:true, label:'egress'}],
       steps:[
-        {note:'Every client enters through the <b>API gateway</b>: TLS, auth, rate limits, routing.', flow:[['m', 'gw', 'GET /home'], ['w', 'gw', 'GET /home']], parallel:true, hl:['gw']},
-        {note:'The gateway routes to the right <b>BFF</b> for that client type.', flow:[['gw', 'bm'], ['gw', 'bw']], parallel:true, hl:['bm', 'bw']},
-        {note:'Each BFF fans out to the services it needs and builds one screen-shaped response.', flow:[['bm', 's1'], ['bm', 's2'], ['bw', 's3']], parallel:true},
-        {note:'Outbound calls from inside (e.g. to an SMS provider) leave through a <b>forward proxy</b> that enforces an allow-list.', flow:[['s3', 'fp', 'POST sms']], hl:['fp']}
+        {note:'The phone and website both enter through the API gateway.', flow:[['m', 'gw', 'home?'], ['w', 'gw', 'home?']], parallel:true, hl:['gw']},
+        {note:'The gateway sends each request to the right BFF.', flow:[['gw', 'bm'], ['gw', 'bw']], parallel:true, hl:['bm', 'bw']},
+        {note:'Each BFF asks the internal services for the facts its screen needs.', flow:[['bm', 's1'], ['bm', 's2'], ['bw', 's3']], parallel:true},
+        {note:'The customer service calls an outside SMS provider through a forward proxy.', flow:[['s3', 'fp', 'send SMS']], hl:['fp']}
       ]},
-    deep:`<p><b>Gateway vs service mesh:</b> the gateway handles <i>north-south</i> traffic (outside → inside); a service mesh with sidecar proxies (often Envoy) handles <i>east-west</i> traffic between services: mTLS, retries, timeouts, telemetry (Module 10).</p><p><b>Availability:</b> the gateway is on every request’s path — run many stateless instances across zones, keep it free of slow synchronous dependencies (cache auth decisions/JWKS keys), and give it strict timeouts so one slow backend can’t exhaust it.</p><p><b>Forward proxies</b> are also a security control: an egress proxy with an allow-list stops a compromised service, or a server-side request forgery bug, from reaching arbitrary internal or external addresses.</p>`
+    html:`<h3>Everyday comparison</h3><div class="simple-table">${h.table(['Hotel desk', 'Food app middle part'], [['Reception sends guests inward', 'Reverse proxy receives client requests.'], ['Reception checks common rules', 'API gateway applies shared API rules.'], ['Concierge plans for one guest type', 'BFF shapes one client’s answer.'], ['Office desk makes an outside call', 'Forward proxy carries calls outward.']])}</div><div class="callout tip"><b>Important point</b><p>Each middle part has a job. Keep order and payment decisions in the services that own them.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Need', 'Middle part'], [['One public entry to servers', 'Reverse proxy.'], ['Shared API checks and routing', 'API gateway.'], ['Different phone and web screens', 'A BFF for each client type.'], ['Control requests leaving the company', 'Forward proxy.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say the phone is 100 ms from the company. Without a BFF, the home screen calls 4 services: orders, restaurants, customer and offers. If sent together that is 100 ms, but the phone must know four addresses and handle four answers. With a mobile BFF, the phone makes 1 call. The BFF calls the 4 services together inside the data center, say 5 ms each, so the total is about 100 + 5 = 105 ms.</p><p>Say the gateway and a service each work 99.9% of the time. A request needs both. 0.999 × 0.999 = 0.998. A 30-day month has 43,200 minutes. The gateway alone can be down 0.001 × 43,200 = 43 minutes. Both in a row can be down about 0.002 × 43,200 = 86 minutes.</p><h4>When it goes wrong</h4><p>Behind a reverse proxy, every request seems to come from the proxy's address. The proxy adds the real client address in a header, often X-Forwarded-For. A client can fake that header. So trust it only when it comes from your own proxy.</p>`
   },
-  tradeoffs:{use:[`<b>Gateway</b> once you have several services or external consumers`, `<b>BFF</b> when clients need very different data shapes or release cadences`], avoid:[`Business logic in the gateway`, `One shared “BFF” for all clients (it becomes a monolith of special cases)`, `A gateway with no redundancy`], alt:[`GraphQL as a single flexible BFF layer`, `Client-side aggregation for internal tools`, `Service mesh for east-west concerns`]},
+  tradeoffs:{use:[`For the food app, use a gateway when phone and web requests need the same entry rules.`, `Use separate BFFs when the phone and website need different home-screen answers.`], avoid:[`Do not put food-order pricing decisions in the gateway.`, `Do not make the gateway the only working path for every customer.`], alt:[`If both screens need nearly the same answer, one simple API endpoint may be enough without separate BFFs.`]},
   real:[
-    {co:'Netflix', tier:'confirmed', text:'Built and open-sourced Zuul, its edge gateway handling routing, resilience and dynamic filters for API traffic.', src:'Netflix Tech Blog — Zuul / Zuul 2'},
-    {co:'SoundCloud', tier:'confirmed', text:'The Backend-for-Frontend pattern emerged there (described by Phil Calçado) and was popularised by Sam Newman’s 2015 article.', src:'Sam Newman, “Backends For Frontends” (2015)'},
-    {co:'Lyft', tier:'confirmed', text:'Created the Envoy proxy and open-sourced it in 2016; it is now a CNCF project used as an edge proxy and as the sidecar in many service meshes.', src:'Lyft Engineering; envoyproxy.io'}
+    {co:'Netflix', tier:'confirmed', text:'Netflix built Zuul to route API traffic through an edge gateway.', src:'Netflix Tech Blog, Zuul'},
+    {co:'SoundCloud', tier:'confirmed', text:'SoundCloud’s use of client-specific backends helped shape the BFF pattern.', src:'Sam Newman, Backends for Frontends (2015)'}
   ],
-  mistakes:[`Gateway as a dumping ground for business rules`, `Auth checks that call a slow service synchronously on every request`, `No egress control — any service can call anything on the internet`],
-  interview:[`Draw the gateway early and list its responsibilities in one breath`, `Distinguish north-south (gateway) from east-west (mesh)`],
-  tryit:{note:'Classify each responsibility.', mount:host => sortGame(host, [
-    {t:'Restrict which external domains internal servers may call', c:'f', why:'Outbound control on behalf of clients is a forward proxy job.'},
-    {t:'Terminate TLS and spread requests across web servers', c:'r', why:'Classic reverse proxy / load balancer duty.'},
-    {t:'Verify API keys and enforce 1,000 requests/minute per partner', c:'g', why:'Auth + quotas per consumer = API gateway.'},
-    {t:'Combine profile, cart and offers into one mobile home-screen response', c:'b', why:'Screen-shaped aggregation for one client type = BFF.'},
-    {t:'Cache static responses and compress them for clients', c:'r', why:'A reverse proxy capability (Nginx, Varnish, CDNs).'},
-    {t:'Route /v2/orders to the new orders service', c:'g', why:'Version- and path-based API routing is gateway work.'},
-    {t:'Return smaller images and fewer fields for the TV app', c:'b', why:'Per-client tailoring belongs in that client’s BFF.'}
-  ], [{id:'f', label:'Forward proxy'}, {id:'r', label:'Reverse proxy'}, {id:'g', label:'API gateway'}, {id:'b', label:'BFF'}])},
-  sources:[`Sam Newman, “Backends For Frontends” (2015)`, `Netflix Tech Blog — Zuul`, `envoyproxy.io documentation`]
+  mistakes:[`Putting order pricing rules in the gateway.`, `Using one BFF for very different screens until it becomes hard to change.`],
+  interview:[`Explain what the gateway checks before the phone request enters.`, `Distinguish the phone BFF from the forward proxy used for an outside SMS call.`],
+  tryit:[{quiz:[
+    {q:'Which middle part shapes an answer for the food phone screen?', options:['The restaurant database alone', 'The phone BFF', 'The DNS resolver', 'The forward proxy'], answer:1, why:'A BFF gathers the fields its client type needs.'},
+    {q:'Which proxy can control an internal service’s call to an outside SMS provider?', options:['A browser tab', 'The menu page', 'Forward proxy', 'Reverse proxy only'], answer:2, why:'A forward proxy acts for a caller sending a request outward.'}
+  ]}, {note:'Sort each food app responsibility by the middle part that handles it.', mount:host => sortGame(host, [
+    {t:'Control which outside SMS provider the food service may call', c:'f', why:'A forward proxy controls the outbound request.'},
+    {t:'Receive phone requests before they reach internal services', c:'r', why:'A reverse proxy stands in front of servers.'},
+    {t:'Check a partner API key and choose an internal route', c:'g', why:'An API gateway applies shared rules.'},
+    {t:'Build one short response for the phone home screen', c:'b', why:'A phone BFF shapes this client’s answer.'},
+    {t:'Build a detailed answer for the food website', c:'b', why:'A web BFF can shape a different answer.'}
+  ], [{id:'f', label:'Forward proxy'}, {id:'r', label:'Reverse proxy'}, {id:'g', label:'API gateway'}, {id:'b', label:'BFF'}])}],
+  sources:[`Sam Newman, Backends for Frontends (2015)`, `Netflix Tech Blog, Zuul`]
 }
 ];
 
 SDA.register({
   kind:'module', id:'networking', order:2, level:'beginner', icon:'🔌', title:'Networking & APIs',
-  summary:'IP and DNS, TCP vs UDP, HTTP/1.1→2→3, TLS, REST/GraphQL/gRPC, real-time transports, API design, idempotency and rate-limit headers, proxies, gateways and BFFs.',
-  outcomes:['Explain DNS resolution, TTLs and safe migrations', 'Choose TCP vs UDP and HTTP/2 vs HTTP/3 with reasons', 'Describe the TLS handshake and where TLS should terminate', 'Pick REST, GraphQL or gRPC per boundary, and SSE vs WebSocket vs webhooks', 'Design APIs with versioning, cursor pagination, idempotency keys and consistent errors'],
+  summary:'Follow a food app from its site name to a protected order request. Compare ways to move data, deliver updates, and keep APIs safe to change.',
+  outcomes:['Explain how a site name, IP address, and port connect a browser to a server', 'Choose TCP, UDP, and an HTTP version for a stated need', 'Explain how a browser checks a food site before sending an order', 'Compare API styles and live update methods using one app', 'Design a partner API that handles changes and retries safely'],
   lessons,
   quiz:[
-    {q:'You will change a DNS record whose TTL is 24 hours. What should you do first?', options:['Change it and immediately shut down the old server', 'Lower the TTL (e.g. to 60 s) at least 24 hours before the change', 'Raise the TTL so the change sticks', 'Nothing — DNS changes are instant'], answer:1, why:'Resolvers may hold the old answer for up to the old TTL. Lower it well ahead, switch, then keep the old server until traffic drains.'},
-    {q:'Why does a single lost packet hurt HTTP/2 more than HTTP/3?', options:['HTTP/2 has no encryption', 'HTTP/2 streams share one TCP connection, so TCP’s in-order delivery stalls all of them', 'HTTP/3 never loses packets', 'HTTP/2 uses UDP'], answer:1, why:'Transport-level head-of-line blocking. QUIC recovers loss per stream.'},
-    {q:'Which use case suits UDP best?', options:['Bank transfer API', 'Database replication', 'Live voice call audio', 'Downloading a software update'], answer:2, why:'A late audio frame is useless; low latency beats completeness.'},
-    {q:'What does the server’s CertificateVerify message prove?', options:['The certificate has not expired', 'The server holds the private key matching the certificate', 'The client is authenticated', 'The cipher suite is secure'], answer:1, why:'Anyone can copy a public certificate; only the key holder can sign the handshake transcript.'},
-    {q:'Your feed changes every second and users scroll deep. Which pagination?', options:['Offset/limit', 'Page numbers', 'Cursor (keyset) pagination', 'Return everything at once'], answer:2, why:'Cursor pagination is stable under inserts/deletes and uses the index instead of skipping rows.'},
-    {q:'A client retries POST /payments after a timeout. What prevents a double charge?', options:['Using HTTPS', 'An Idempotency-Key stored atomically with the charge', 'Returning 500 on the retry', 'Using GET instead'], answer:1, why:'The server recognises the repeated key and returns the stored result instead of executing again.'},
-    {q:'Which transport fits streaming LLM tokens from server to browser?', options:['Webhooks', 'Server-Sent Events', 'Short polling every 5 s', 'SMTP'], answer:1, why:'One-way server → client stream over plain HTTP with auto-reconnect.'},
-    {q:'You L4-load-balance gRPC traffic and one backend is overloaded. Most likely cause?', options:['Protobuf is slow', 'Long-lived HTTP/2 connections pin all calls on a connection to one backend', 'gRPC doesn’t support load balancing', 'TLS is misconfigured'], answer:1, why:'L4 balances connections, not requests. Use L7 or client-side per-request balancing.'},
-    {q:'Which HTTP status tells a client to slow down?', options:['400', '403', '429 with Retry-After', '503 with no headers'], answer:2, why:'RFC 6585 defines 429 Too Many Requests; Retry-After says when to retry.'},
-    {q:'Where should business logic live in a gateway + BFF design?', options:['In the API gateway', 'In the services (and screen-specific aggregation in BFFs)', 'In the forward proxy', 'In DNS'], answer:1, why:'Keep the gateway thin and policy-focused; services own domain logic.'},
-    {type:'scenario', q:'Design real-time order tracking for 5 million concurrently open food-delivery apps.', answer:'<ul><li><b>Transport:</b> SSE (one-way updates) or WebSocket if the app also sends (chat with rider). Fall back to long polling; use push notifications (APNs/FCM) when the app is backgrounded.</li><li><b>Edge:</b> a fleet of connection servers behind an L4/L7 LB with long idle timeouts and heartbeats every ~30 s; ~50–100K connections per node → roughly 50–100 nodes.</li><li><b>Routing:</b> order-status events go to a pub/sub backbone (Kafka → per-node subscribers, or Redis pub/sub keyed by order ID); a registry maps user → connection server.</li><li><b>Resilience:</b> on reconnect the client sends its last event ID and the server replays missed events from a short-lived store; drain connections gradually during deploys with jittered reconnects.</li><li><b>Cost check:</b> short polling at 5 s would be 1M req/s of mostly “no news”.</li></ul>'},
-    {type:'scenario', q:'You must rename a widely used field in a public API with 300 partners. Plan the change.', answer:'<ol><li>Add the new field alongside the old one (additive, non-breaking).</li><li>Mark the old field deprecated in the OpenAPI spec and docs; send <code>Deprecation</code>/<code>Sunset</code> headers.</li><li>Instrument usage per API key; contact heavy users; update SDKs.</li><li>If behaviour must change incompatibly, ship a new version (path or date-based) and run both.</li><li>Add contract tests and spec linting in CI so this can’t happen accidentally.</li><li>Remove the old field only after the sunset date and near-zero usage.</li></ol>'}
+    {q:'What does DNS give the browser for food.example.com?', options:['A restaurant menu', 'A server IP address', 'An order receipt', 'A payment key'], answer:1, why:'DNS turns the site name into an address the browser can contact.'},
+    {q:'What should the company do before moving food.example.com to a new address?', options:['Turn off the old server first', 'Raise the old TTL', 'Lower the TTL early and keep the old server running', 'Ask every customer to change a setting'], answer:2, why:'Saved answers may still point to the old server until they expire.'},
+    {q:'Which need is a better fit for TCP’s ordered delivery?', options:['The newest moment of a voice call', 'A disappearing animation', 'A missed radio word', 'A complete food order request'], answer:3, why:'The order request needs complete data in the correct order.'},
+    {q:'What changes from HTTP/2 to HTTP/3 when one stream loses data?', options:['HTTP/3 cannot lose packets', 'HTTP/2 stops using HTTP', 'The site name changes', 'HTTP/3 can continue other streams'], answer:3, why:'QUIC lets unaffected streams continue while one recovers.'},
+    {q:'What does the browser check before trusting the food site over HTTPS?', options:['Only the restaurant rating', 'The certificate name and trusted issuer', 'The delivery distance', 'The number of page files'], answer:1, why:'The certificate helps verify the site before order data is sent.'},
+    {q:'Which API style lets the phone name the fields it wants for an order screen?', options:['DNS', 'TCP', 'GraphQL', 'A forward proxy'], answer:2, why:'A GraphQL query names the requested fields.'},
+    {q:'Which method sends one-way order updates over a held HTTP response?', options:['SSE', 'Webhook to another server', 'A DNS lookup', 'A new payment'], answer:0, why:'SSE streams updates from the order server to the open app.'},
+    {q:'What does a cursor mark when a restaurant reads order pages?', options:['The HTTP version', 'The customer password', 'The total price', 'The last order already seen'], answer:3, why:'The next page continues after the last seen order.'},
+    {q:'The payment answer was lost. Which key should the phone use on retry?', options:['A new key', 'The same idempotency key', 'The restaurant name', 'No key'], answer:1, why:'The same key lets the server return the earlier result without charging again.'},
+    {q:'What should a client do after 429 with Retry-After: 12?', options:['Retry twelve times at once', 'Delete the order', 'Wait about 12 seconds', 'Change DNS'], answer:2, why:'Retry-After tells the client when to send another request.'},
+    {q:'Which middle part shapes a short answer for the food phone screen?', options:['The browser certificate', 'The phone BFF', 'The forward proxy', 'The DNS root'], answer:1, why:'A BFF gathers an answer for one client type.'},
+    {type:'scenario', q:'The food app must show order status to an open phone and notify a restaurant partner. Choose both methods.', answer:'<p>Use SSE for one-way updates to the open phone. Use a webhook to send a new request to the restaurant partner’s server. If the phone also needs live two-way chat, compare WebSocket. Let the partner recognize a repeated webhook event.</p>'},
+    {type:'scenario', q:'A restaurant partner uses the old price field, but the food API needs price_paise. How should the company change it?', answer:'<ol><li>Add price_paise beside the old field.</li><li>Document both fields in OpenAPI and tell partners when the old field may end.</li><li>Give partners a new API version if the old meaning must change.</li><li>Watch old-version use and allow time for migration.</li></ol>'}
   ],
   flashcards:[
-    {front:'DNS TTL', back:'How long resolvers may cache an answer. Lower it before migrations.'},
-    {front:'A vs CNAME record', back:'A maps a name to an IPv4 address; CNAME aliases one name to another (not allowed at the zone apex).'},
-    {front:'TCP head-of-line blocking', back:'A lost packet stalls all later data on that connection until retransmitted, because TCP delivers in order.'},
-    {front:'HTTP/2 vs HTTP/3', back:'HTTP/2 multiplexes streams over one TCP connection; HTTP/3 does it over QUIC (UDP) with per-stream loss recovery and a 1-RTT handshake.'},
-    {front:'TLS 1.3 handshake cost', back:'1 round trip (0 with resumption, replay-unsafe).'},
-    {front:'Forward secrecy', back:'Ephemeral key exchange: a stolen long-term key can’t decrypt past recorded sessions.'},
-    {front:'mTLS', back:'Both client and server present certificates — service-to-service authentication.'},
-    {front:'GraphQL N+1 problem', back:'Per-field resolvers trigger one backend call per item; fix with DataLoader-style batching.'},
-    {front:'SSE vs WebSocket', back:'SSE: one-way server→client over HTTP with auto-reconnect. WebSocket: full-duplex after an HTTP upgrade.'},
-    {front:'Cursor pagination', back:'WHERE (sort_key, id) < cursor ORDER BY … LIMIT n — stable and index-friendly.'},
-    {front:'Idempotency key', back:'Client-generated unique key per operation; server stores it atomically with the side effect and replays the stored response.'},
-    {front:'429 + Retry-After', back:'Too Many Requests; tells the client when it may retry.'},
-    {front:'API gateway vs BFF', back:'Gateway: shared policy layer (auth, quotas, routing). BFF: per-client aggregation backend.'}
+    {front:'IP address', back:'A numeric destination for a device or server on a network.'},
+    {front:'Port', back:'A number that selects a program at a network address.'},
+    {front:'DNS TTL', back:'How long a saved name-to-address answer may be used.'},
+    {front:'TCP', back:'Tracks delivery, resends missing data, and delivers data in order.'},
+    {front:'UDP', back:'Sends independent packets without a delivery or ordering promise.'},
+    {front:'HTTP/2 and HTTP/3', back:'Both use streams. HTTP/3 can continue unaffected streams after a loss.'},
+    {front:'HTTPS', back:'HTTP sent through a protected TLS connection.'},
+    {front:'Certificate', back:'A document that helps the browser check a site name and public key.'},
+    {front:'REST and GraphQL', back:'REST offers named resources. GraphQL lets a client name selected fields.'},
+    {front:'gRPC', back:'A typed call format often used between internal services.'},
+    {front:'SSE, WebSocket, webhook', back:'One-way stream to an app, two-way connection, and event request to another server.'},
+    {front:'Cursor', back:'A marker for the last item seen when reading a long list.'},
+    {front:'Idempotency key', back:'A key reused on retries of one action so the server can return its earlier result.'},
+    {front:'API gateway and BFF', back:'The gateway applies shared entry rules. A BFF shapes an answer for one client type.'}
   ],
   cheatsheet:[
-    {h:'🌍 IP & DNS', items:['IPv4 32-bit, IPv6 128-bit; NAT for private ranges', 'Records: A, AAAA, CNAME, MX, TXT, NS', 'Resolution: stub → resolver → root → TLD → authoritative', 'Lower TTL ≥ 1 old-TTL before a change', 'DNS = first, coarse load balancer']},
-    {h:'🚚 Transport', items:['TCP: ordered, reliable, congestion-controlled', 'UDP: datagrams, no order, no retransmit', 'HOL blocking: loss stalls later data (TCP)', 'Pool connections; beware TIME_WAIT & port exhaustion', 'QUIC = reliable streams over UDP']},
-    {h:'🌐 HTTP versions', items:['1.1: ~6 conns/host, one request at a time each', '2: binary, multiplexed, HPACK, one TCP conn', '3: QUIC, per-stream recovery, 1-RTT, conn migration', 'ALPN / Alt-Svc negotiate versions', 'Long-lived conns → balance per request (L7)']},
-    {h:'🔒 TLS', items:['Privacy + integrity + authenticity', 'Chain to trusted root; hostname in SAN; dates; revocation', 'ECDHE → forward secrecy; AEAD ciphers', 'Terminate at edge; re-encrypt/mTLS inside', 'Automate certs (ACME) + expiry alerts']},
-    {h:'🧩 API styles & push', items:['REST: resources, verbs, cacheable GETs', 'GraphQL: exact fields; watch N+1 & query cost', 'gRPC: protobuf over HTTP/2, deadlines, streaming', 'SSE one-way · WebSocket two-way · webhook server→server', 'Sign + retry + dedupe webhooks']},
-    {h:'📐 API design', items:['Additive changes free; breaking → new version', 'Cursor pagination for feeds', 'Errors: RFC 9457 problem+json + machine code', 'Money in minor units; times ISO-8601 UTC', 'Idempotency-Key on state-changing POSTs', '429 + Retry-After + rate-limit headers', 'OpenAPI as the single source of truth']}
+    {h:'🌍 Find the food site', items:['DNS turns a site name into an IP address.', 'A port selects the program at that address.', 'A resolver may save an address until its TTL expires.', 'Lower the TTL early and keep the old server during an address move.']},
+    {h:'📦 Move data', items:['TCP resends missing data and delivers it in order.', 'UDP sends independent packets without that promise.', 'HTTP/1.1 uses turns on each connection.', 'HTTP/2 shares a TCP connection across streams.', 'HTTP/3 uses QUIC so one lost stream need not stop the others.']},
+    {h:'🔒 Protect the order', items:['HTTPS is HTTP inside TLS.', 'The browser checks the certificate name, dates, and issuer.', 'The browser and site agree on a secret key before sending the order.', 'Renew certificates before they expire.']},
+    {h:'🧩 Choose an API style', items:['REST offers named resources through HTTP.', 'GraphQL lets the phone name needed fields.', 'A tailored REST endpoint can also return one screen-shaped answer.', 'gRPC uses a shared typed format between services.']},
+    {h:'📡 Send live news', items:['Long polling waits for one answer, then asks again.', 'SSE streams updates from server to an open app.', 'WebSocket carries messages both ways.', 'A webhook sends an event request to another server.']},
+    {h:'📐 Keep the API safe to use', items:['Add a new field before removing an old one.', 'Use a cursor for a changing order list.', 'Return clear status codes and a steady error shape.', 'Describe the API in OpenAPI.', 'Reuse one idempotency key for retries of one payment.', 'After 429, honor Retry-After.']},
+    {h:'🚪 Middle parts', items:['A reverse proxy receives requests for servers.', 'An API gateway applies shared entry rules.', 'A BFF shapes one client type’s answer.', 'A forward proxy carries requests outward.']}
   ],
   glossary:[
-    {term:'IP address', def:'A numeric network address for a host: 32-bit in IPv4, 128-bit in IPv6.'},
-    {term:'IPv6', def:'The 128-bit successor to IPv4, with a vastly larger address space.'},
-    {term:'NAT', aka:['network address translation', 'carrier-grade NAT', 'CGNAT'], def:'Network Address Translation: many private addresses share one public IP; carrier-grade NAT does this at ISP scale.'},
-    {term:'Port', def:'A 16-bit number identifying a service on a host, e.g. 443 for HTTPS.'},
-    {term:'TTL', aka:['time to live'], def:'Time To Live: how long a cached answer (DNS record, cache entry) remains valid.'},
-    {term:'CNAME', def:'A DNS record that aliases one name to another name.'},
-    {term:'Recursive resolver', aka:['DNS resolver'], def:'The DNS server that walks the hierarchy on a client’s behalf and caches answers.'},
-    {term:'TCP', def:'Transmission Control Protocol: reliable, ordered, congestion-controlled byte streams.'},
-    {term:'UDP', def:'User Datagram Protocol: connectionless datagrams with no delivery or ordering guarantees.'},
-    {term:'Head-of-line blocking', aka:['HOL blocking'], def:'When one delayed or lost item holds up everything queued behind it.'},
-    {term:'Congestion control', def:'TCP/QUIC algorithms (Reno, CUBIC, BBR) that adapt sending rate to avoid overloading the network.'},
-    {term:'HTTP/2', def:'Binary, multiplexed HTTP over a single TCP connection with HPACK header compression.'},
-    {term:'HTTP/3', def:'HTTP over QUIC (UDP), with independent streams and faster handshakes.'},
-    {term:'Multiplexing', def:'Sending many independent streams over one connection at the same time.'},
-    {term:'Certificate authority', aka:['CA'], def:'A trusted organisation that signs certificates binding domain names to public keys.'},
-    {term:'Forward secrecy', def:'Property where compromising a long-term key does not expose past session traffic.'},
-    {term:'mTLS', aka:['mutual TLS'], def:'TLS in which both client and server authenticate with certificates.'},
-    {term:'REST', def:'An architectural style exposing resources at URLs and manipulating them with standard HTTP methods.'},
-    {term:'GraphQL', def:'A query language and runtime where clients request exactly the fields they need from a typed schema.'},
-    {term:'gRPC', def:'An RPC framework using Protocol Buffers over HTTP/2, with code generation, deadlines and streaming.'},
-    {term:'Protocol Buffers', aka:['protobuf'], def:'Google’s compact binary serialisation format with schema-based evolution via field numbers.'},
-    {term:'WebSocket', aka:['WebSockets'], def:'A full-duplex message channel created by upgrading an HTTP connection (RFC 6455).'},
-    {term:'Server-Sent Events', aka:['SSE'], def:'A one-way server-to-client event stream over a long-lived HTTP response.'},
-    {term:'Long polling', def:'Holding a client request open until data is available, then responding and letting the client re-ask.'},
-    {term:'Webhook', aka:['webhooks'], def:'An HTTP callback: a server POSTs to a registered URL when an event happens.'},
-    {term:'Cursor pagination', aka:['keyset pagination'], def:'Paging by “items after this sort key” rather than by numeric offset; stable and index-friendly.'},
-    {term:'Idempotency', aka:['idempotent'], def:'An operation that has the same effect whether applied once or many times.'},
-    {term:'Idempotency key', aka:['Idempotency-Key'], def:'A client-supplied unique key that lets a server recognise and safely replay retried requests.'},
-    {term:'OpenAPI', aka:['Swagger'], def:'A standard, machine-readable description format for HTTP APIs (formerly Swagger).'},
-    {term:'Reverse proxy', def:'A server in front of backends that receives client requests and forwards them (TLS, balancing, caching).'},
-    {term:'Forward proxy', def:'A proxy acting on behalf of clients for outbound requests (filtering, caching, egress control).'},
-    {term:'API gateway', def:'A reverse proxy specialised for APIs: authentication, rate limiting, routing, quotas and analytics.'},
-    {term:'BFF', aka:['backend for frontend'], def:'Backend For Frontend: a client-specific backend that aggregates services into the shapes one client needs.'}
+    {term:'IP address', aka:['IP addresses'], def:'A number that identifies a computer on a network, like a street address. Example: 203.0.113.7 is the address of one server.'},
+    {term:'IPv4', aka:['IPv4 address'], def:'The older IP address format. It uses 32 bits, which gives about 4 billion addresses. Example: 192.168.1.10.'},
+    {term:'IPv6', aka:['IPv6 address'], def:'The newer IP address format. It uses 128 bits, so there are far more addresses. Example: 2001:db8::1.'},
+    {term:'Port', aka:['ports'], def:'A number that picks which program on a computer receives the data. Example: web servers listen on port 443 for secure web traffic.'},
+    {term:'DNS', aka:['Domain Name System'], def:'The system that turns a site name into an IP address, like a phone book. Example: it turns food.example.com into 203.0.113.7.'},
+    {term:'Resolver', aka:['DNS resolver', 'resolvers'], def:'A server that looks up DNS answers for you and remembers them for a while. Example: your internet provider’s DNS server.'},
+    {term:'TTL', aka:['time to live', 'TTLs'], def:'Time to live: how long a saved answer may be used before it must be checked again. Example: a DNS answer with a TTL of 300 seconds can be reused for 5 minutes. Caches use TTLs too.'},
+    {term:'DNS A record', aka:['DNS A records'], def:'A DNS answer that gives the IPv4 address for a name. Example: food.example.com points to 203.0.113.7.'},
+    {term:'AAAA record', aka:['AAAA records'], def:'A DNS answer that gives the IPv6 address for a name. Example: food.example.com points to 2001:db8::1.'},
+    {term:'CNAME', aka:['CNAME record'], def:'A DNS answer that says one name is a nickname for another name. Example: www.food.example.com is an alias for food.example.com.'},
+    {term:'Packet', aka:['packets'], def:'A small chunk of data sent across a network. Example: a web page is split into many packets that are put back together at the other end.'},
+    {term:'TCP', def:'A way of sending data that checks delivery, resends what is lost and keeps the order. Example: loading a web page needs every byte, so it uses TCP.'},
+    {term:'UDP', def:'A fast way of sending data that does not promise delivery or order. Example: a live video call can skip a lost packet instead of waiting for it.'},
+    {term:'Head-of-line blocking', aka:['HOL blocking'], def:'When one missing piece holds up everything behind it, even pieces that have already arrived. Example: if packet 3 is lost, packets 4 to 10 wait until packet 3 is sent again.'},
+    {term:'Congestion control', def:'The way a sender slows down when the network looks crowded. Example: TCP sends fewer packets after it notices losses.'},
+    {term:'HTTP', def:'The rules a browser and a server use to ask for pages and send them back. Example: GET /menu asks the server for the menu page.'},
+    {term:'HTTP/1.1', def:'An older HTTP version. Each connection handles one request at a time. Example: loading 30 files over one connection makes them queue, so browsers open several connections.'},
+    {term:'HTTP/2', def:'An HTTP version that sends many requests at the same time over one connection. Example: a browser fetches 30 files together over one TCP connection.'},
+    {term:'HTTP/3', def:'The newest HTTP version. It runs on QUIC, so a lost packet only slows its own stream. Example: one stuck image does not delay the page’s text.'},
+    {term:'Stream', def:'A continuous flow of data or messages. In HTTP/2, each file request is its own stream on a shared connection. In Kafka, a stream is an ordered log of events.'},
+    {term:'QUIC', def:'A modern transport built on UDP that adds reliable streams. HTTP/3 uses it. Example: many big sites use QUIC for faster page loads.'},
+    {term:'HTTPS', def:'HTTP sent through an encrypted TLS connection, so others cannot read or change it. Example: the padlock in your browser’s address bar.'},
+    {term:'TLS', def:'The protocol that proves a site is who it claims to be and scrambles the data in transit. Example: when you log in, TLS stops people on the same Wi-Fi from reading your password.'},
+    {term:'Certificate', aka:['certificates', 'TLS certificate'], def:'A digital ID card for a website. It ties the site name to a public key and is signed by a trusted issuer. Example: the browser checks that the certificate says food.example.com.'},
+    {term:'Certificate authority', aka:['CA', 'certificate authorities'], def:'A trusted organisation that signs certificates after checking who owns the site. Example: Let’s Encrypt is a certificate authority.'},
+    {term:'Forward secrecy', def:'A protection so that stealing a server’s key later does not let anyone read old recorded traffic. Example: even if the key leaks next year, last month’s traffic stays private.'},
+    {term:'mTLS', aka:['mutual TLS'], def:'Mutual TLS: both sides show certificates, so each proves who it is. Example: two internal services check each other’s identity before they talk.'},
+    {term:'API', aka:['APIs'], def:'The set of requests a program accepts and the answers it gives, so other programs can use it. Example: a food app asks a restaurant API for a menu.'},
+    {term:'REST', def:'An API style where things have URLs and you use standard HTTP actions on them. Example: GET /orders/17 reads order 17 and DELETE /orders/17 cancels it.'},
+    {term:'GraphQL', def:'An API style where the client asks for exactly the fields it needs in one query. Example: ask for an order’s status and the driver’s name, and nothing else.'},
+    {term:'gRPC', def:'A fast way for services to call each other using strict, shared message definitions. Example: the order service calls the payment service almost like a normal function.'},
+    {term:'Protocol Buffers', aka:['protobuf'], def:'A compact message format where the fields are described in a shared file. Example: messages are smaller than JSON, so they are faster to send between services.'},
+    {term:'Server-Sent Events', aka:['SSE'], def:'A way for a server to keep a connection open and push updates to the browser, in one direction only. Example: a live order status that updates on the page.'},
+    {term:'WebSocket', aka:['WebSockets'], def:'A connection that stays open so the client and the server can both send messages at any time. Example: a chat app.'},
+    {term:'Long polling', def:'The client asks, the server waits until it has news, then answers, and the client asks again. Example: the app asks “any updates?” and the server holds the question for up to 30 seconds.'},
+    {term:'Webhook', aka:['webhooks'], def:'A call that one server makes to another server’s URL when something happens. Example: a payment company calls your server when a payment succeeds.'},
+    {term:'API version', aka:['API versions', 'API versioning'], def:'A named set of API behaviour that clients can rely on. Example: /v1/orders keeps working for old apps while /v2/orders adds new features.'},
+    {term:'Pagination', aka:['paginated'], def:'Splitting a long list into smaller pages. Example: show 20 orders at a time instead of all 5,000.'},
+    {term:'Cursor pagination', aka:['keyset pagination'], def:'Splitting a long list into pages by remembering the last item you saw. Example: “give me 20 orders after order 8451”.'},
+    {term:'OpenAPI', def:'A file format that describes an API in a way both people and tools can read. Example: a tool reads the file and builds the API documentation automatically.'},
+    {term:'Idempotency', aka:['idempotent'], def:'Doing an action twice has the same result as doing it once. Example: setting a seat to “booked” twice leaves it booked, but adding ₹100 twice charges ₹200.'},
+    {term:'Idempotency key', aka:['Idempotency-Key'], def:'A unique ID sent with a request so the server can recognise a retry and not repeat the action. Example: a retried payment carries the same key and is charged only once.'},
+    {term:'Retry-After', def:'A response header that tells the client how long to wait before trying again. Example: Retry-After: 30 means wait 30 seconds.'},
+    {term:'429 Too Many Requests', aka:['HTTP 429', '429'], def:'An HTTP status code that means you are sending too many requests, so slow down. Example: a client that calls an API 1,000 times a minute may start getting 429 answers.'},
+    {term:'Reverse proxy', def:'A server in front of your servers that receives outside requests and passes them on. Example: one public address that forwards to 5 app servers.'},
+    {term:'Forward proxy', def:'A server that sends requests out on behalf of users. Example: a company proxy that all employee browsers use to reach the internet.'},
+    {term:'API gateway', def:'A reverse proxy for APIs that does shared jobs such as login checks and routing. Example: it sends /orders to the order service and /menu to the menu service.'},
+    {term:'BFF', aka:['backend for frontend'], def:'Backend for frontend: a small backend built for one kind of client that gathers just what that client needs. Example: a mobile BFF returns short lists, and a web BFF returns more fields.'}
   ],
-  sources:['RFC 1034/1035, 9293, 768, 8446, 9000, 9110–9114, 6455, 9457, 6585, 8594', 'Ilya Grigorik, “High Performance Browser Networking”', 'Stripe, GitHub, Slack and Netflix engineering documentation and blogs cited per lesson']
+  sources:['RFC 1034 and RFC 1035', 'RFC 9293 and RFC 768', 'RFC 8446', 'RFC 9000 and RFC 9110 to RFC 9114', 'GraphQL specification', 'gRPC documentation', 'Stripe and GitHub API documentation']
 });
 } catch(e){ console.error('[SDA] Module "networking" failed to load', e); window.SDA && SDA.errors.push({id:'networking', error:e}); }
 })();

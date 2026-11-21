@@ -8,11 +8,11 @@ const {css, frag} = SDA.ph;
 /* ---------------- #22 Autoscaling ---------------- */
 try {
 const PATTERNS = {
-  diurnal:{label:'Daily curve (food delivery: lunch + dinner peaks)', sched:[{from:18 * 60 + 30, to:23 * 60, key:'dinner'}],
-    fn:m => { const hr = m / 60; const g = (c, w, a) => a * Math.exp(-Math.pow((hr - c) / w, 2)); return 250 + g(13, 1.2, 1400) + g(20.5, 1.6, 3000) + g(9, 1.5, 300); }},
-  ipl:{label:'Live match: 4× jump at 19:30 for 3.5 h', sched:[{from:19 * 60, to:23 * 60 + 15, key:'match'}],
-    fn:m => { const base = 300 + 500 * Math.exp(-Math.pow((m / 60 - 13) / 2, 2)); if (m < 19 * 60 + 30 || m > 23 * 60) return base; const ramp = Math.min(1, (m - (19 * 60 + 30)) / 3); const wicket = (m >= 21 * 60 + 15 && m < 21 * 60 + 22) ? 1.3 : 1; return base + 4200 * ramp * wicket; }},
-  tatkal:{label:'Booking windows open at 10:00 and 11:00 sharp', sched:[{from:9 * 60 + 40, to:10 * 60 + 40, key:'10:00 window'}, {from:10 * 60 + 40, to:11 * 60 + 40, key:'11:00 window'}],
+  diurnal:{label:'Daily commute: morning and evening peaks', sched:[{from:7 * 60 + 30, to:10 * 60, key:'morning commute'}, {from:17 * 60, to:20 * 60, key:'evening commute'}],
+    fn:m => { const hr = m / 60; const g = (c, w, a) => a * Math.exp(-Math.pow((hr - c) / w, 2)); return 250 + g(8.5, 1.2, 3000) + g(18, 1.5, 2400) + g(13, 1.5, 900); }},
+  ipl:{label:'Stadium crowd: sharp rise at 19:30', sched:[{from:19 * 60, to:23 * 60 + 15, key:'stadium crowd'}],
+    fn:m => { const base = 300 + 500 * Math.exp(-Math.pow((m / 60 - 13) / 2, 2)); if (m < 19 * 60 + 30 || m > 23 * 60) return base; const ramp = Math.min(1, (m - (19 * 60 + 30)) / 3); const crowd = (m >= 21 * 60 + 15 && m < 21 * 60 + 22) ? 1.3 : 1; return base + 4200 * ramp * crowd; }},
+  tatkal:{label:'Station transfers at 10:00 and 11:00', sched:[{from:9 * 60 + 40, to:10 * 60 + 40, key:'10:00 transfer'}, {from:10 * 60 + 40, to:11 * 60 + 40, key:'11:00 transfer'}],
     fn:m => { let v = 350 + 250 * Math.exp(-Math.pow((m / 60 - 18) / 3, 2)); if (m >= 600) v += 6500 * Math.exp(-(m - 600) / 9); if (m >= 660) v += 2500 * Math.exp(-(m - 660) / 7); return v; }}
 };
 function simulateScaling(P){
@@ -49,15 +49,15 @@ function simulateScaling(P){
   return out;
 }
 SDA.scaleSim = simulateScaling;
-SDA.register({kind:'playground', id:'autoscaling', module:'reliability', icon:'📈', title:'Autoscaling simulator: a day of traffic',
-  summary:'Run 24 hours of traffic minute by minute against fixed capacity, target tracking, step scaling, scheduled scaling or predictive scaling. Tune target utilisation, warm-up and the scale-in window and see SLO breaches against cost.',
-  explain:`<ul><li><b>Target tracking</b> uses the Kubernetes HPA formula, <code>desired = ⌈current × currentUtil ÷ targetUtil⌉</code>, on last minute’s metric. New instances take the <b>warm-up</b> time before they serve traffic.</li><li>On the <b>Live match</b> or <b>10:00 booking</b> pattern, reactive scaling is always late: demand jumps faster than instances boot, so you get breach minutes. <b>Scheduled</b> or <b>predictive</b> scaling pre-warms capacity before the known event.</li><li>A lower <b>target utilisation</b> leaves more headroom (fewer breaches, higher cost). A short <b>scale-in window</b> saves money but can flap and cut capacity just before the next bump.</li><li><b>Fixed capacity</b> sized for the peak wastes money all night; sized for the average, it melts at peak.</li></ul>`,
-  real:[{co:'Kubernetes Horizontal Pod Autoscaler', tier:'confirmed', text:'The HPA computes desiredReplicas = ceil(currentReplicas × currentMetricValue ÷ desiredMetricValue). By default it uses a 300-second stabilisation window for scale-down to avoid flapping.', src:'Kubernetes documentation — Horizontal Pod Autoscaling'}, {co:'AWS EC2 Auto Scaling', tier:'confirmed', text:'Offers target tracking, step, scheduled and predictive scaling. Predictive scaling forecasts load from history to launch capacity ahead of recurring peaks.', src:'Amazon EC2 Auto Scaling documentation'}, {co:'Live-streaming and ticketing spikes in India', tier:'inference', text:'For events with a known start time (a cricket match, a 10:00 booking window), reactive autoscaling alone reacts minutes late, so platforms pre-provision for the forecast peak and treat autoscaling as a safety net.', src:'Reasonable architectural inference from public talks on large live events'}],
+SDA.register({kind:'playground', id:'autoscaling', module:'reliability', icon:'📈', title:'Autoscaling a transit arrival app',
+  summary:'Run a day of arrival checks. Compare fixed capacity, reactive scaling, and capacity scheduled before known rider peaks.',
+  explain:`<h3>How to use it</h3><ol><li>Pick the daily commute pattern and set fixed capacity. Press <b>Play day</b> and watch the missed arrival checks at the peaks.</li><li>Switch the scaling policy to target tracking. New copies need a few minutes to start, so the peak still hurts.</li><li>Switch to scheduled capacity. The copies are ready before the commute starts.</li></ol><h3>What to notice</h3><ul><li>A stadium crowd or a station transfer wave rises faster than reactive scaling can follow.</li><li>A lower use target leaves more spare room but costs more.</li></ul><div class="callout tip"><b>Important point</b><p>New copies are not ready at once. When a peak is predictable, add capacity before it starts.</p></div>`,
+  real:[{co:'Kubernetes Horizontal Pod Autoscaler', tier:'confirmed', text:'Kubernetes documents scaling workloads from measured and target values.', src:'Kubernetes Horizontal Pod Autoscaling documentation'}, {co:'AWS EC2 Auto Scaling', tier:'confirmed', text:'Supports target tracking and schedules for capacity changes.', src:'Amazon EC2 Auto Scaling documentation'}],
   mount(host, api){
-    const P = {pattern:'ipl', policy:'target', target:60, warm:5, stab:10, min:2, max:120, cap:100, fixed:20};
+    const P = {pattern:'diurnal', policy:'target', target:60, warm:5, stab:10, min:2, max:120, cap:100, fixed:20};
     let S = [], cursor = 1440, playing = false;
-    const cv = el('canvas', {height:560, style:{height:'280px'}, 'aria-label':'Demand versus serving capacity over 24 hours, with SLO breach minutes shaded red'}); const box = el('div', {class:'chart-box', style:{marginTop:'12px'}}, cv);
-    const met = ui.metrics(null, [{id:'clock', label:'Clock'}, {id:'inst', label:'Instances (ready + booting)'}, {id:'breach', label:'SLO-breach minutes', instant:true, warn:1, bad:20}, {id:'drop', label:'Requests dropped', unit:'%', instant:true, fmt:v => v.toFixed(2), warn:.01, bad:1}, {id:'ih', label:'Instance-hours', instant:true}, {id:'cost', label:'Cost (illustrative)', instant:true}, {id:'util', label:'Avg utilisation', unit:'%', instant:true, dir:'down', warn:35}]);
+    const cv = el('canvas', {height:560, style:{height:'280px'}, 'aria-label':'Transit arrival checks and app capacity over one day, with missed target minutes shaded red'}); const box = el('div', {class:'chart-box', style:{marginTop:'12px'}}, cv);
+    const met = ui.metrics(null, [{id:'clock', label:'Clock'}, {id:'inst', label:'App copies ready + starting'}, {id:'breach', label:'Minutes missing target', instant:true, warn:1, bad:20}, {id:'drop', label:'Arrival checks dropped', unit:'%', instant:true, fmt:v => v.toFixed(2), warn:.01, bad:1}, {id:'ih', label:'App copy-hours', instant:true}, {id:'cost', label:'Sample cost', instant:true}, {id:'util', label:'Average use', unit:'%', instant:true, dir:'down', warn:35}]);
     const hhmm = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
     function run(){ S = simulateScaling(P); paint(); }
     function paint(){
@@ -72,23 +72,23 @@ SDA.register({kind:'playground', id:'autoscaling', module:'reliability', icon:'�
       line('capacity', css('--ok'), 2, true); line('d', css('--accent1'), 1.6, false);
       g.font = '11px ' + css('--font-mono'); g.fillStyle = css('--muted');
       for (let hr = 0; hr <= 24; hr += 3) g.fillText(String(hr).padStart(2, '0') + ':00', X(hr * 60) - 16, H - 8);
-      g.fillText(fmtNum(mx) + ' rps', 2, 22); g.fillText('— demand  — capacity  ▒ SLO breach' + (P.policy === 'scheduled' ? '  ▒ schedule' : ''), 50, 12);
+      g.fillText(fmtNum(mx) + ' checks/s', 2, 22); g.fillText('arrival checks   capacity   shaded: missed target' + (P.policy === 'scheduled' ? '   scheduled' : ''), 50, 12);
       if (cursor < 1440){ g.strokeStyle = css('--text'); g.setLineDash([3, 3]); g.beginPath(); g.moveTo(X(cursor), 14); g.lineTo(X(cursor), H - 24); g.stroke(); g.setLineDash([]); }
     }
     api.loop(dt => { if (!playing) return; cursor = Math.min(1440, cursor + dt * 160); paint(); if (cursor >= 1440){ playing = false; playBtn.innerHTML = '▶ Play day'; } });
     const playBtn = ui.button('▶ Play day', () => { if (playing){ playing = false; playBtn.innerHTML = '▶ Play day'; return; } if (cursor >= 1440) cursor = 1; playing = true; playBtn.innerHTML = '⏸ Pause'; }, 'sm primary');
-    const policySel = ui.select({label:'Scaling policy', value:P.policy, options:[['fixed', 'Fixed capacity (no autoscaling)'], ['target', 'Target tracking (reactive, HPA-style)'], ['step', 'Step scaling (CPU > 80% for 3 min → +20%)'], ['scheduled', 'Scheduled + target tracking'], ['predictive', 'Predictive (forecast) + target tracking']], onChange:v => { P.policy = v; run(); }});
+    const policySel = ui.select({label:'Scaling policy', value:P.policy, options:[['fixed', 'Fixed app copies'], ['target', 'React to current load'], ['step', 'Add copies after sustained high use'], ['scheduled', 'Schedule copies, then track load'], ['predictive', 'Forecast demand, then track load']], onChange:v => { P.policy = v; run(); }});
     host.append(
       el('div', {class:'ctl-grid'},
         ui.select({label:'Traffic pattern', value:P.pattern, options:Object.entries(PATTERNS).map(([k, p]) => [k, p.label]), onChange:v => { P.pattern = v; run(); }}).el, policySel.el,
         ui.slider({label:'Target utilisation', min:30, max:90, step:5, value:P.target, fmt:v => v + '%', onInput:v => { P.target = v; run(); }}).el,
         ui.slider({label:'Instance warm-up (boot + ready)', min:1, max:15, step:1, value:P.warm, fmt:v => v + ' min', onInput:v => { P.warm = v; run(); }}).el,
         ui.slider({label:'Scale-in stabilisation window', min:1, max:60, step:1, value:P.stab, fmt:v => v + ' min', onInput:v => { P.stab = v; run(); }}).el,
-        ui.slider({label:'Fixed fleet size (fixed policy)', min:2, max:120, step:1, value:P.fixed, fmt:v => v + ' instances', onInput:v => { P.fixed = v; run(); }}).el,
-        ui.slider({label:'Capacity per instance', min:50, max:300, step:10, value:P.cap, fmt:v => v + ' rps', onInput:v => { P.cap = v; run(); }}).el),
+        ui.slider({label:'Fixed app copies', min:2, max:120, step:1, value:P.fixed, fmt:v => v + ' copies', onInput:v => { P.fixed = v; run(); }}).el,
+        ui.slider({label:'Arrival checks per app copy', min:50, max:300, step:10, value:P.cap, fmt:v => v + ' each second', onInput:v => { P.cap = v; run(); }}).el),
       el('div', {class:'controls', style:{margin:'10px 0'}}, playBtn, ui.button('⏭ +1 hour', () => { playing = false; playBtn.innerHTML = '▶ Play day'; if (cursor >= 1440) cursor = 0; cursor = Math.min(1440, cursor + 60); paint(); }, 'sm'), ui.button('⏮ Reset to 00:00', () => { playing = false; playBtn.innerHTML = '▶ Play day'; cursor = 1; paint(); }, 'sm ghost'), ui.button('Show full day', () => { playing = false; playBtn.innerHTML = '▶ Play day'; cursor = 1440; paint(); }, 'sm')),
       box, el('div', {style:{height:'10px'}}), met.el,
-      el('p', {class:'lab-hint'}, 'One-minute steps. A minute is an SLO breach when demand exceeds capacity (requests dropped) or the modelled latency (40 ms ÷ (1 − utilisation)) goes above 200 ms. Cost assumes an illustrative ₹8 per instance-hour. The predictive policy assumes today looks like the forecast. Real forecasts are imperfect, which is why target tracking stays on underneath.'));
+      el('p', {class:'lab-hint'}, 'The chart advances one minute at a time. A minute misses the target when arrival checks are dropped or response time exceeds 200 milliseconds. Cost uses a sample ₹8 per app copy-hour. The forecast assumes today follows the chosen pattern, while real days can differ.'));
     run();
   }
 });
@@ -96,12 +96,12 @@ SDA.register({kind:'playground', id:'autoscaling', module:'reliability', icon:'�
 
 /* ---------------- #23 Chaos monkey ---------------- */
 try {
-SDA.register({kind:'playground', id:'chaos-monkey', module:'reliability', icon:'🐒', title:'Chaos monkey: kill things, watch recovery',
-  summary:'A small e-commerce system: gateway, catalog, recommendations, cart and payments across three availability zones. Kill instances, take out a whole zone or inject latency, then switch resilience features on and off to see what actually saves you.',
-  explain:`<ul><li>Start with every resilience feature <b>off</b> and press <b>Kill random instance</b>. Without health checks the load balancer keeps sending a third of the traffic to the dead box, and without self-healing nobody replaces it.</li><li>Turn on <b>Health checks + self-healing</b>. The dead instance is detected after 3 failed checks (≈3 s) and pulled from rotation, and a replacement is healthy about 8 s later. Watch the MTTR metric.</li><li><b>Kill zone B.</b> With <b>3 instances spread over 3 AZs</b> the system loses a third of its capacity but stays up. With one instance per service, an unlucky zone takes the whole site down.</li><li><b>Slow down recommendations.</b> Without <b>timeouts + circuit breakers + fallbacks</b>, a non-critical feature hangs the home page. With them, users get “popular items” instead and the page still loads.</li><li><b>Unleash the monkey</b> to kill a random instance every 6 s, like Netflix’s Chaos Monkey does during business hours.</li></ul>`,
-  real:[{co:'Netflix Chaos Monkey & Simian Army', tier:'confirmed', text:'Netflix built Chaos Monkey (2011) to randomly terminate production instances during business hours, so engineers would build services that tolerate instance loss. Chaos Gorilla and Chaos Kong later simulated losing an availability zone and a whole region.', src:'Netflix Tech Blog, “The Netflix Simian Army” (2011); Basiri et al., “Chaos Engineering”, IEEE Software (2016)'}, {co:'Google DiRT', tier:'confirmed', text:'Google runs annual Disaster Recovery Testing (DiRT) exercises that deliberately break systems and processes to find weaknesses before real disasters do.', src:'Kripa Krishnan, “Weathering the Unexpected”, ACM Queue (2012)'}],
+SDA.register({kind:'playground', id:'chaos-monkey', module:'reliability', icon:'🐒', title:'Transit app failure drill',
+  summary:'Stop one transit app copy, take down a zone, or slow the route tips. Watch the stop pages and live arrivals respond.',
+  explain:`<h3>How to use it</h3><ol><li>Turn health checks off and press <b>Kill random instance</b>. Requests keep reaching the dead copy.</li><li>Turn health checks on and kill again. The failed copy is removed after a few checks, and a replacement starts.</li><li>Press <b>Slow route tips</b> with the timeout, breaker and fallback on. The basic stop page still loads.</li></ol><h3>What to notice</h3><ul><li>Press <b>Kill zone B</b> to see how copies in the other zones help.</li><li>The monkey repeats failures, so you can see whether the app keeps recovering.</li></ul><div class="callout tip"><b>Important point</b><p>Break things on purpose in a safe test. You learn what recovers by itself and what does not.</p></div>`,
+  real:[{co:'Netflix Chaos Monkey', tier:'confirmed', text:'Netflix described stopping production instances to test whether services tolerate instance loss.', src:'Netflix Tech Blog, The Netflix Simian Army (2011)'}, {co:'Google DiRT', tier:'confirmed', text:'Google described recovery drills that deliberately interrupt systems and processes.', src:'Kripa Krishnan, Weathering the Unexpected (2012)'}],
   mount(host, api){
-    const SV = [{id:'gw', name:'API gateway', crit:true}, {id:'cat', name:'Catalog', crit:true}, {id:'rec', name:'Recommendations', crit:false}, {id:'cart', name:'Cart', crit:true}, {id:'pay', name:'Payments', crit:true}];
+    const SV = [{id:'gw', name:'Arrival gateway', crit:true}, {id:'cat', name:'Stop details', crit:true}, {id:'rec', name:'Route tips', crit:false}, {id:'cart', name:'Route database', crit:true}, {id:'pay', name:'Vehicle feed', crit:true}];
     const AZ = ['A', 'B', 'C']; const R = rng(5);
     const P = {redundant:true, heal:false, breaker:false, monkey:false, speed:1, rate:60};
     let S, running = !api.reduced;
@@ -141,7 +141,7 @@ SDA.register({kind:'playground', id:'chaos-monkey', module:'reliability', icon:'
       const br = S.recBreaker; if (br.open && S.t < br.until) return {ok:false, fallback:true, lat:2};
       if (br.open){ br.open = false; br.fails = 0; }
       const res = slow ? {ok:false, lat:300} : {ok, lat:ok ? 60 : 5};
-      if (!res.ok){ if (++br.fails >= 5){ br.open = true; br.until = S.t + 5000; log('🔌 Recommendations breaker OPEN: serving “popular items” fallback for 5 s.'); } } else br.fails = 0;
+      if (!res.ok){ if (++br.fails >= 5){ br.open = true; br.until = S.t + 5000; log('🔌 Route-tip breaker open. The stop page hides optional tips for five seconds.'); } } else br.fails = 0;
       return res.ok ? res : {ok:false, fallback:true, lat:res.lat};
     }
     function request(){
@@ -153,7 +153,7 @@ SDA.register({kind:'playground', id:'chaos-monkey', module:'reliability', icon:'
     }
     /* ---------- view ---------- */
     const grid = el('div', {class:'tbl-wrap'});
-    const met = ui.metrics(null, [{id:'home', label:'Home page success', unit:'%', instant:true, dir:'down', warn:99, bad:90}, {id:'chk', label:'Checkout success', unit:'%', instant:true, dir:'down', warn:99, bad:90}, {id:'deg', label:'Degraded (fallback) pages', unit:'%', instant:true, warn:1}, {id:'healthy', label:'Healthy instances'}, {id:'kills', label:'Failures injected', instant:true}, {id:'mttr', label:'Mean time to recover', instant:true}]);
+    const met = ui.metrics(null, [{id:'home', label:'Stop page success', unit:'%', instant:true, dir:'down', warn:99, bad:90}, {id:'chk', label:'Live arrival success', unit:'%', instant:true, dir:'down', warn:99, bad:90}, {id:'deg', label:'Pages without route tips', unit:'%', instant:true, warn:1}, {id:'healthy', label:'Healthy app copies'}, {id:'kills', label:'Failures injected', instant:true}, {id:'mttr', label:'Mean time to recover', instant:true}]);
     function render(){
       const tb = el('table', {class:'tbl', style:{minWidth:'0', fontSize:'13px'}}); const hd = el('tr', null, el('th', null, 'Service')); AZ.forEach(z => hd.append(el('th', null, `AZ ${z}${S.azDownUntil[z] > S.t ? ' 🌩' : ''}`))); tb.append(el('thead', null, hd)); const body = el('tbody');
       SV.forEach(s => { const tr = el('tr', null, el('td', {style:{minWidth:'90px', padding:'8px 10px'}}, el('b', null, s.name), (!s.crit || (s.id === 'rec' && S.t < S.recSlowUntil)) ? el('div', {class:'lab-hint', style:{margin:'2px 0 0'}}, (s.crit ? '' : 'non-critical') + (s.id === 'rec' && S.t < S.recSlowUntil ? ' · 🐢 +3 s' : '')) : null));
@@ -164,7 +164,7 @@ SDA.register({kind:'playground', id:'chaos-monkey', module:'reliability', icon:'
       met.set('home', home.length ? home.filter(o => o.ok).length * 100 / home.length : 100); met.set('chk', chk.length ? chk.filter(o => o.ok).length * 100 / chk.length : 100);
       met.set('deg', home.length ? home.filter(o => o.degraded).length * 100 / home.length : 0);
       const up = S.inst.filter(x => x.state === 'up').length, total = SV.length * (P.redundant ? 3 : 1); met.set('healthy', `${up} / ${total}`, up < total ? (up < total * .67 ? 'bad' : 'warn') : '');
-      met.set('kills', S.kills.length); met.set('mttr', S.mttr.length ? fmtDur(S.mttr.reduce((a, b) => a + b, 0) / S.mttr.length) : (S.kills.length ? (P.heal ? 'recovering…' : 'never (no self-healing)') : '—'), S.kills.length && !S.mttr.length && !P.heal ? 'bad' : '');
+      met.set('kills', S.kills.length); met.set('mttr', S.mttr.length ? fmtDur(S.mttr.reduce((a, b) => a + b, 0) / S.mttr.length) : (S.kills.length ? (P.heal ? 'recovering…' : 'never (no self-healing)') : 'n/a'), S.kills.length && !S.mttr.length && !P.heal ? 'bad' : '');
     }
     let lastUI = 0;
     api.loop(dt => { if (!running) return; step(dt * 1000 * P.speed); if (S.t - lastUI >= 300){ lastUI = S.t; render(); } });
@@ -173,17 +173,17 @@ SDA.register({kind:'playground', id:'chaos-monkey', module:'reliability', icon:'
       el('div', {class:'controls'},
         ui.toggle({label:'3 instances across 3 zones', checked:true, onChange:v => { P.redundant = v; reset(); render(); }}).el,
         ui.toggle({label:'Health checks + self-healing', checked:false, onChange:v => { P.heal = v; log(v ? 'Health checks every 1 s; 3 failures → remove + replace.' : 'Health checks off.'); }}).el,
-        ui.toggle({label:'Timeouts + circuit breaker + fallback', checked:false, onChange:v => { P.breaker = v; S.recBreaker = {open:false, until:0, fails:0}; log(v ? 'Recommendations calls: 300 ms timeout, breaker opens after 5 failures, fallback = popular items.' : 'No timeouts or fallbacks: callers wait for recommendations.'); }}).el,
+        ui.toggle({label:'Route-tip timeout, breaker and fallback', checked:false, onChange:v => { P.breaker = v; S.recBreaker = {open:false, until:0, fails:0}; log(v ? 'Route tips time out after 300 ms. After five failures, the breaker opens and the stop page hides tips.' : 'Route-tip calls have no timeout or fallback. A slow call can delay the stop page.'); }}).el,
         ui.toggle({label:'🐒 Unleash the monkey (every 6 s)', checked:false, onChange:v => { P.monkey = v; S.nextMonkey = S.t + 1000; log(v ? 'Chaos monkey active.' : 'Chaos monkey stopped.'); }}).el),
       el('div', {class:'controls', style:{margin:'10px 0'}},
         ui.button('💥 Kill random instance', () => { killRandom('Manual kill'); render(); }, 'sm'),
         ui.button('🌩 Kill zone B', () => { killZone('B'); render(); }, 'sm'),
-        ui.button('🐢 Slow recommendations (20 s)', () => { S.recSlowUntil = S.t + 20000; log('🐢 Recommendations now respond in 3 s (GC pauses, a slow DB query) for 20 s.', 'err'); render(); }, 'sm'),
+        ui.button('🐢 Slow route tips (20 s)', () => { S.recSlowUntil = S.t + 20000; log('🐢 Route tips now take three seconds per call for 20 seconds.', 'err'); render(); }, 'sm'),
         runBtn, ui.button('⏭ Step 1 s', () => { running = false; runBtn.innerHTML = '▶ Play'; step(1000); render(); }, 'sm'),
         el('label', {class:'field', style:{minWidth:'120px'}}, el('span', null, 'Speed'), ui.speedSelect(v => P.speed = v)),
         ui.button('⏮ Reset', () => { reset(); render(); }, 'sm ghost')),
       grid, el('div', {style:{height:'10px'}}), met.el, el('div', {style:{height:'10px'}}), el('b', null, 'Event log'), logBox,
-      el('p', {class:'lab-hint'}, `60 requests/s: 70% home page (gateway → catalog + recommendations), 30% checkout (gateway → cart → payments). Metrics cover the last 5 s. The load balancer round-robins over every registered instance; a dead one keeps receiving traffic until health checks remove it (3 failed checks ≈ 3 s), or forever without health checks. Without timeouts a slow dependency means the page hangs, which counts as a failure.${api.reduced ? ' Reduced motion is on, so the simulation starts paused: press Play or Step.' : ''}`));
+      el('p', {class:'lab-hint'}, `The sample sends 60 requests each second. About 70% load stop pages through the gateway, stop details, and optional route tips. About 30% ask for a live arrival through the gateway, route database, and vehicle feed. Metrics cover the last five seconds. Without health checks, a failed copy stays in rotation. Without a route-tip timeout, the stop page can hang.${api.reduced ? ' Reduced motion is on, so the simulation starts paused. Press Play or Step.' : ''}`));
     reset(); render();
   }
 });

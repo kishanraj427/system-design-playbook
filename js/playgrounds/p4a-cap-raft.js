@@ -9,8 +9,8 @@ const {css, frag} = SDA.ph;
 /* ---------------- #7 CAP / PACELC explorer ---------------- */
 try {
 SDA.register({kind:'playground', id:'cap-quorum', module:'distributed', icon:'⚖️', title:'CAP & PACELC explorer (quorums + partitions)',
-  summary:'N replicas, two clients in two regions, tunable R and W, CP or AP behaviour. Cut the network, keep reading and writing, then heal it and see what survived.',
-  explain:`<ul><li><b>No partition, R + W ≤ N:</b> reads sometimes miss the latest write (stale). Make R + W &gt; N and they stop.</li><li><b>Partition + CP:</b> the side without enough reachable replicas returns <b>errors</b> (unavailable) — but never stale or conflicting data.</li><li><b>Partition + AP:</b> both sides keep accepting writes. On <b>heal</b>, last-write-wins keeps one and silently discards the other acknowledged write.</li><li><b>PACELC:</b> even with no partition, the latency bars show that waiting for more replicas (higher W) costs time.</li></ul><p class="lab-hint">Writes go to W randomly chosen reachable replicas; the rest catch up only via anti-entropy (button or heal). Replica latencies are random but fixed per reset.</p>`,
+  summary:'Run N replicas with two clients in two regions. Change R and W, choose CP or AP, cut the network, then heal it and see what survived.',
+  explain:`<h3>How to use it</h3><ol><li>With no partition, set R + W ≤ N. Reads sometimes return old data. Then set R + W &gt; N and the old reads stop.</li><li>Cut the network in CP mode. The side without enough replicas returns errors.</li><li>Repeat in AP mode and press heal. One acknowledged write is silently thrown away.</li></ol><h3>What to notice</h3><ul><li>CP never returns old or conflicting data, but it can refuse requests.</li><li>Waiting for more replicas (a higher W) costs time even without a partition.</li></ul><div class="callout tip"><b>Important point</b><p>During a partition you must choose. Refuse requests (CP), or accept them and fix conflicts later (AP).</p></div><p class="lab-hint">Writes go to W random reachable replicas. The others catch up through anti-entropy (the button or heal).</p>`,
   real:[{co:'Cassandra · DynamoDB · Spanner', tier:'confirmed', text:'Cassandra and DynamoDB let you tune consistency per request (latency vs freshness); Spanner always pays for consistency with consensus latency.', src:'Vendor documentation'}],
   mount(host, api){
     const P = {n:5, w:3, r:3, mode:'cp', part:false};
@@ -41,7 +41,7 @@ SDA.register({kind:'playground', id:'cap-quorum', module:'distributed', icon:'�
       const targets = shuffle(R.slice()).slice(0, P.mode === 'ap' && P.part ? R.length : Math.min(P.w, R.length)); const v = Math.floor(Math.random() * 900) + 100; ts++;
       targets.forEach(i => nodes[i] = {val:v, ts}); latest = {val:v, ts}; stats.ok++; if (P.part) sideWrites[side].push({val:v, ts});
       d.flow(targets.map(i => [c, 'n' + i, 'x=' + v]), {parallel:true, dur:500});
-      cap.innerHTML = `${name} wrote x=${v} (v${ts}) to replica(s) ${targets.map(i => i + 1).join(', ')}${P.mode === 'ap' && P.part && R.length < P.w ? ` — <b>sloppy</b>: only ${R.length} reachable but AP accepts anyway` : ''}. Acknowledged ✓`;
+      cap.innerHTML = `${name} wrote x=${v} (v${ts}) to replica(s) ${targets.map(i => i + 1).join(', ')}${P.mode === 'ap' && P.part && R.length < P.w ? `, <b>sloppy</b>: only ${R.length} reachable but AP accepts anyway` : ''}. Acknowledged ✓`;
       paint();
     }
     function read(c){
@@ -50,7 +50,7 @@ SDA.register({kind:'playground', id:'cap-quorum', module:'distributed', icon:'�
       const picked = shuffle(R.slice()).slice(0, Math.min(P.r, R.length)); const best = picked.reduce((b, i) => nodes[i].ts > b.ts ? nodes[i] : b, {val:0, ts:-1});
       d.flow(picked.map(i => ['n' + i, c, 'v' + nodes[i].ts]), {parallel:true, dur:500});
       const stale = best.ts < latest.ts; if (stale) stats.stale++; else stats.ok++;
-      cap.innerHTML = stale ? `<b style="color:var(--bad)">${name} read STALE x=${best.val} (v${best.ts})</b> from replica(s) ${picked.map(i => i + 1).join(', ')} — the latest acknowledged write is x=${latest.val} (v${latest.ts}).` : `${name} read x=${best.val} (v${best.ts}) from replica(s) ${picked.map(i => i + 1).join(', ')} — up to date ✓`;
+      cap.innerHTML = stale ? `<b style="color:var(--bad)">${name} read STALE x=${best.val} (v${best.ts})</b> from replica(s) ${picked.map(i => i + 1).join(', ')}. The latest acknowledged write is x=${latest.val} (v${latest.ts}).` : `${name} read x=${best.val} (v${best.ts}) from replica(s) ${picked.map(i => i + 1).join(', ')}. It is up to date ✓`;
       paint();
     }
     function antiEntropy(){ const groups = P.part ? ['A', 'B'] : ['all']; groups.forEach(g => { const ids = nodes.map((_, i) => i).filter(i => g === 'all' || sideOf(i) === g); const best = ids.reduce((b, i) => nodes[i].ts > b.ts ? nodes[i] : b, {val:0, ts:-1}); ids.forEach(i => nodes[i] = {...best}); }); cap.textContent = 'Anti-entropy: replicas exchanged versions and converged on the newest they could reach.'; paint(); }
@@ -60,7 +60,7 @@ SDA.register({kind:'playground', id:'cap-quorum', module:'distributed', icon:'�
       else cap.innerHTML = `Partition! Mumbai reaches replicas ${nodes.map((_, i) => i).filter(i => sideOf(i) === 'A').map(i => i + 1).join(', ')}; Singapore reaches ${nodes.map((_, i) => i).filter(i => sideOf(i) === 'B').map(i => i + 1).join(', ')}.`;
       paint();
     }
-    function drawLat(){ const s = lat.slice().sort((a, b) => a - b); latBox.innerHTML = ''; latBox.append(el('b', null, 'PACELC — “Else”: write latency = waiting for the W-th fastest replica')); s.forEach((v, k) => latBox.append(el('div', {class:'wf-row', style:{gridTemplateColumns:'70px 1fr 70px'}}, el('span', {class:'wl', style:{fontWeight:k + 1 === P.w ? '700' : '400'}}, `W = ${k + 1}`), el('div', {class:'wf-track'}, el('div', {class:'wf-bar', style:{left:'0', width:(v / s[s.length - 1] * 100) + '%', background:k + 1 === P.w ? 'var(--accent2)' : 'var(--c-db)'}})), el('span', {class:'wt'}, v + ' ms')))); }
+    function drawLat(){ const s = lat.slice().sort((a, b) => a - b); latBox.innerHTML = ''; latBox.append(el('b', null, 'PACELC, the “Else” part: write latency = waiting for the W-th fastest replica')); s.forEach((v, k) => latBox.append(el('div', {class:'wf-row', style:{gridTemplateColumns:'70px 1fr 70px'}}, el('span', {class:'wl', style:{fontWeight:k + 1 === P.w ? '700' : '400'}}, `W = ${k + 1}`), el('div', {class:'wf-track'}, el('div', {class:'wf-bar', style:{left:'0', width:(v / s[s.length - 1] * 100) + '%', background:k + 1 === P.w ? 'var(--accent2)' : 'var(--c-db)'}})), el('span', {class:'wt'}, v + ' ms')))); }
     const SL = {};
     const sl = (k, label) => (SL[k] = ui.slider({label, min:k === 'n' ? 3 : 1, max:7, step:1, value:P[k], fmt:v => v, onInput:v => { P[k] = v; P.w = Math.min(P.w, P.n); P.r = Math.min(P.r, P.n); SL.w && SL.w.set(P.w); SL.r && SL.r.set(P.r); P.part = false; partT.set(false); reset(); }}));
     const partT = ui.toggle({label:'✂️ Network partition between regions', checked:false, onChange:setPart});
@@ -76,8 +76,8 @@ SDA.register({kind:'playground', id:'cap-quorum', module:'distributed', icon:'�
 /* ---------------- #8 Raft leader election + log replication ---------------- */
 try {
 SDA.register({kind:'playground', id:'raft', module:'distributed', icon:'🗳️', title:'Raft: leader election & log replication',
-  summary:'A live five-node Raft cluster with real rules: terms, randomised election timeouts, votes, heartbeats, log replication and commit-on-majority. Kill nodes, partition the cluster, send writes.',
-  explain:`<ul><li>Watch the shrinking <b>timeout rings</b>: the first follower to reach zero becomes a <b>candidate</b> (amber), asks for votes, and becomes <b>leader</b> (green) with 3 of 5.</li><li><b>Kill the leader</b>: within a couple of seconds a new leader is elected with a higher term.</li><li><b>Partition</b> S1–S2 away from S3–S5 while S1 or S2 leads: the old leader keeps accepting writes that <b>never commit</b> (no majority). The majority side elects a new leader and commits. Heal it: the old leader sees the higher term, steps down, and its uncommitted entries are overwritten.</li><li>Kill three nodes: no majority, no leader, no progress — Raft chooses consistency over availability.</li></ul><p class="lab-hint">Times are slowed for visibility but keep Raft’s key ratio (timeout ≫ round trip): election timeout 1.5–3.5 s, heartbeat 0.5 s, message delay 0.11–0.22 s. Use the speed selector to slow it further. Log boxes show the term of each entry; filled = committed.</p>`,
+  summary:'Run a live five-node Raft cluster with terms, election timeouts, votes, heartbeats and log copying. Kill nodes, cut the network and send writes.',
+  explain:`<h3>How to use it</h3><ol><li>Watch the timeout rings. The first follower to reach zero becomes a candidate and asks for votes. With 3 of 5 votes it becomes leader.</li><li>Kill the leader. A new leader wins within a couple of seconds, with a higher term.</li><li>Press the partition button while S1 or S2 is leader, then send writes. They never commit. Heal the network and watch them get overwritten.</li></ol><h3>What to notice</h3><ul><li>A write commits only when a majority holds it.</li><li>With 3 nodes down there is no leader. Raft picks safety over availability.</li></ul><div class="callout tip"><b>Important point</b><p>Only a majority can elect a leader or commit a write. So at most one side of a split can make progress.</p></div><p class="lab-hint">Times are slowed so you can see them. Filled log boxes are committed.</p>`,
   real:[{co:'etcd · Consul · CockroachDB · Kafka KRaft', tier:'confirmed', text:'These systems implement Raft for leader election and replicated logs.', src:'Project documentation; raft.github.io'}],
   mount(host, api){
     const N = 5, MAJ = 3; let nodes, msgs, t, events, cmdN, part, paused = false, speed = 1, lastDraw = 0;
@@ -118,7 +118,7 @@ SDA.register({kind:'playground', id:'raft', module:'distributed', icon:'🗳️'
     function clientWrite(minority){
       const L = leaders().filter(l => minority ? group(l.i) === 0 && part : !part || group(l.i) === 1 || !leaders().some(x => group(x.i) === 1));
       const ld = minority ? L.find(l => group(l.i) === 0) : L[0];
-      if (!ld){ ev(minority ? 'No leader on the minority side.' : 'Client write failed: no leader reachable — retry after election.'); draw(); return; }
+      if (!ld){ ev(minority ? 'No leader on the minority side.' : 'Client write failed: no leader reachable. Retry after an election.'); draw(); return; }
       ld.log.push({term:ld.term, cmd:'x=' + (++cmdN)}); ld.match[ld.i] = ld.log.length - 1; ev(`Client → S${ld.i + 1}: append x=${cmdN} at #${ld.log.length} (term ${ld.term})`); broadcast(ld); draw();
     }
     /* drawing */

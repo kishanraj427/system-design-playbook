@@ -10,8 +10,8 @@ const wait = ms => new Promise(r => setTimeout(r, SDA.reduced ? 80 : ms));
 /* ---------------- #18 Saga vs 2PC ---------------- */
 try {
 SDA.register({kind:'playground', id:'saga-2pc', module:'distributed', icon:'🧾', title:'Saga vs two-phase commit',
-  summary:'Place a food order across Order, Payment, Restaurant and Delivery services using 2PC, an orchestrated saga or a choreographed saga. Inject a failure and watch locks, votes, compensations and events.',
-  explain:`<ul><li><b>2PC + restaurant rejects:</b> everyone aborts cleanly — but every service held locks for the whole protocol.</li><li><b>2PC + coordinator crash:</b> all participants voted YES and are stuck <b>in doubt</b>, locks held, until you press Recover.</li><li><b>Saga + restaurant rejects:</b> payment already happened, so the orchestrator runs <b>compensations</b> in reverse: refund, then cancel. Users briefly see a PENDING order — sagas trade isolation for availability.</li><li><b>Choreography</b> does the same through events on a bus, with no central coordinator — notice how much harder it is to see the whole flow.</li></ul>`,
+  summary:'Place a food order across Order, Payment, Restaurant and Delivery with 2PC, an orchestrated saga or a choreographed saga. Inject a failure and watch the locks, votes and undo steps.',
+  explain:`<h3>How to use it</h3><ol><li>Pick <b>2PC</b> and let the restaurant reject. Everyone aborts, but every service held its locks the whole time.</li><li>Pick 2PC and crash the coordinator. Services that voted YES are stuck waiting until you press Recover.</li><li>Pick a saga and use the same failure. Watch the refund and cancel steps run in reverse order.</li></ol><h3>What to notice</h3><ul><li>A saga lets users briefly see a PENDING order. It gives up isolation to stay available.</li><li>Choreography has no central coordinator, so the whole flow is harder to follow.</li></ul><div class="callout tip"><b>Important point</b><p>2PC holds locks until everyone agrees. A saga commits each step at once and undoes it with a new step if something fails.</p></div>`,
   real:[{co:'Temporal · Netflix Conductor · AWS Step Functions', tier:'confirmed', text:'Durable workflow engines commonly used to orchestrate sagas with retries and compensations.', src:'Project documentation'}, {co:'Google Spanner', tier:'confirmed', text:'Uses 2PC across Paxos groups so the coordinator itself is replicated.', src:'Corbett et al., OSDI 2012'}],
   mount(host, api){
     let mode = '2pc', fail = 'none', busy = false, crashed = null, lockT = 0, lockTimer = 0, msgs = 0;
@@ -26,7 +26,7 @@ SDA.register({kind:'playground', id:'saga-2pc', module:'distributed', icon:'🧾
           nodes:[{id:'u', type:'client', label:'Customer', x:70, y:150, w:110}, {id:'co', type:mode === 'chor' ? 'queue' : 'service', label:mode === '2pc' ? 'Coordinator' : mode === 'orch' ? 'Orchestrator' : 'Event bus', sub:'', x:250, y:150, w:140}].concat(SV.map((s, i) => ({id:s, type:'service', label:NAME[s], sub:'', x:560, y:40 + i * 73, w:150}))),
           edges:[{from:'u', to:'co'}].concat(SV.map(s => ({from:'co', to:s})))});
       });
-      SV.forEach(s => { state[s] = {s:'—', lock:false}; d.setSub(s, '—'); }); d.setSub('co', '');
+      SV.forEach(s => { state[s] = {s:'idle', lock:false}; d.setSub(s, 'idle'); }); d.setSub('co', '');
     }
     const log = s => { logBox.prepend(el('div', {class:'ln'}, s)); };
     const set = (s, txt, lock) => { state[s].s = txt; if (lock != null) state[s].lock = lock; d.setSub(s, txt + (state[s].lock ? ' 🔒' : '')); };
@@ -51,7 +51,7 @@ SDA.register({kind:'playground', id:'saga-2pc', module:'distributed', icon:'🧾
       const done = [];
       for (let k = resumeFrom || 0; k < steps.length; k++){
         const [s, act] = steps[k];
-        if (k === 2 && fail === 'crash' && !resumeFrom && mode === 'orch'){ crashed = 'saga'; d.setStatus('co', 'down'); d.setSub('co', 'state: step 2 done'); log('Orchestrator crashed after step 2. Its progress is in a durable workflow store.'); d.setCaption('The orchestrator <b>crashed</b> — but saga state is durable. No locks are held; the order is visibly PENDING. Press Recover to resume.'); res.className = 'verdict warn'; res.textContent = 'Paused mid-saga (no locks held). Press “Recover coordinator”.'; busy = false; return; }
+        if (k === 2 && fail === 'crash' && !resumeFrom && mode === 'orch'){ crashed = 'saga'; d.setStatus('co', 'down'); d.setSub('co', 'state: step 2 done'); log('Orchestrator crashed after step 2. Its progress is in a durable workflow store.'); d.setCaption('The orchestrator <b>crashed</b>, but saga state is durable. No locks are held; the order is visibly PENDING. Press Recover to resume.'); res.className = 'verdict warn'; res.textContent = 'Paused mid-saga (no locks held). Press “Recover coordinator”.'; busy = false; return; }
         if (mode === 'orch'){ d.setCaption(`T${k + 1}: orchestrator → ${NAME[s]}: ${act}`); await flow([['co', s, act.split(' ')[0]]]); }
         else { d.setCaption(`T${k + 1}: ${NAME[s]} reacts to the previous event and does: ${act}`); await flow([['co', s, k ? ['OrderCreated', 'PaymentDone', 'Accepted'][k - 1] : 'OrderPlaced']]); }
         if (failsAt(s)){ set(s, 'FAILED'); d.setStatus(s, 'hot'); log(`T${k + 1} ${NAME[s]} failed → compensate ${done.length} completed step(s) in reverse`); await (mode === 'orch' ? flow([[s, 'co', 'failed']]) : flow([[s, 'co', 'Failed event']]));
@@ -62,10 +62,10 @@ SDA.register({kind:'playground', id:'saga-2pc', module:'distributed', icon:'🧾
       }
       set('order', 'CONFIRMED ✓'); await flow([['co', 'u', 'confirmed']]); finish('Completed', 'ok');
     }
-    function finish(txt, cls, comp){ clearInterval(lockTimer); SV.forEach(s => state[s].lock = false); met.set('final', txt); res.className = 'verdict ' + cls; res.textContent = `${txt}. ${mode === '2pc' ? `Locks were held for ${lockT.toFixed(1)} service-seconds in total.` : comp ? 'Users could see the PENDING order and the charge/refund — sagas give up isolation.' : 'No distributed locks were ever held; each step committed locally.'}`; d.setCaption(txt); busy = false; }
+    function finish(txt, cls, comp){ clearInterval(lockTimer); SV.forEach(s => state[s].lock = false); met.set('final', txt); res.className = 'verdict ' + cls; res.textContent = `${txt}. ${mode === '2pc' ? `Locks were held for ${lockT.toFixed(1)} service-seconds in total.` : comp ? 'Users could see the PENDING order and the charge and refund. Sagas give up isolation.' : 'No distributed locks were ever held; each step committed locally.'}`; d.setCaption(txt); busy = false; }
     async function run(){ if (busy) return; busy = true; crashed = null; lockT = 0; msgs = 0; res.className = 'verdict warn'; res.textContent = 'Running…'; met.set('msgs', 0); met.set('locks', 0); met.set('final', '…'); logBox.innerHTML = ''; build(); if (mode === '2pc') await run2pc(); else await runSaga(); }
     async function recover(){ if (!crashed || busy) return; busy = true; log('Coordinator restarted and read its durable log.'); if (crashed === '2pc'){ crashed = null; await commit2pc(); } else { crashed = null; d.setStatus('co', 'ok'); await runSaga(2); } }
-    host.append(el('div', {class:'ctl-grid'}, ui.select({label:'Protocol', value:'2pc', options:[['2pc', 'Two-phase commit'], ['orch', 'Saga — orchestration'], ['chor', 'Saga — choreography']], onChange:v => { mode = v; build(); }}).el, ui.select({label:'Inject failure', value:'none', options:[['none', 'No failure'], ['pay', 'Payment declines'], ['rest', 'Restaurant rejects'], ['deliv', 'No rider available'], ['crash', 'Coordinator/orchestrator crashes mid-way']], onChange:v => fail = v}).el),
+    host.append(el('div', {class:'ctl-grid'}, ui.select({label:'Protocol', value:'2pc', options:[['2pc', 'Two-phase commit'], ['orch', 'Saga: orchestration'], ['chor', 'Saga: choreography']], onChange:v => { mode = v; build(); }}).el, ui.select({label:'Inject failure', value:'none', options:[['none', 'No failure'], ['pay', 'Payment declines'], ['rest', 'Restaurant rejects'], ['deliv', 'No rider available'], ['crash', 'Coordinator/orchestrator crashes mid-way']], onChange:v => fail = v}).el),
       el('div', {class:'controls', style:{margin:'10px 0'}}, ui.button('▶ Run', run, 'sm primary'), ui.button('♻️ Recover coordinator', recover, 'sm ok')), holder, res, el('div', {style:{height:'10px'}}), met.el, el('h4', {style:{margin:'12px 0 6px'}}, 'Log'), logBox);
     build();
   }
@@ -75,16 +75,16 @@ SDA.register({kind:'playground', id:'saga-2pc', module:'distributed', icon:'🧾
 /* ---------------- #24 Snowflake ID bit layout ---------------- */
 try {
 SDA.register({kind:'playground', id:'snowflake', module:'distributed', icon:'❄️', title:'Snowflake IDs bit by bit (vs UUIDv4, UUIDv7, ULID)',
-  summary:'Generate real 64-bit Snowflake IDs and watch the timestamp, datacenter, worker and sequence bits compose. Overflow the sequence, roll the clock back, and compare sortability with UUIDv4, UUIDv7 and ULID.',
-  explain:`<ul><li>Generate a few IDs: only the low <b>sequence</b> bits change within a millisecond; the high <b>timestamp</b> bits make IDs sort by time.</li><li><b>Burst 5,000</b> in one millisecond: the sequence overflows at 4,096 and the generator must wait for the next millisecond.</li><li>Turn on <b>clock rollback</b>: a correct generator refuses to issue IDs rather than risk duplicates.</li><li>The <b>sortability test</b> generates IDs a few milliseconds apart: Snowflake, UUIDv7 and ULID sort in creation order; UUIDv4 doesn’t.</li></ul>`,
-  real:[{co:'Twitter · Discord · Instagram', tier:'confirmed', text:'Twitter introduced Snowflake (2010, epoch 1288834974657 ms); Discord uses Snowflake-format IDs; Instagram used 41 time bits + 13 shard bits + 10 sequence bits.', src:'Twitter Engineering (2010); Discord docs; Instagram Engineering (2012)'}],
+  summary:'Generate real 64-bit Snowflake IDs and watch the time, datacenter, worker and sequence bits join together. Overflow the sequence, roll the clock back and compare with other ID types.',
+  explain:`<h3>How to use it</h3><ol><li>Generate a few IDs. Only the low sequence bits change inside one millisecond.</li><li>Press <b>Burst 5,000</b>. The sequence overflows at 4,096, so the generator waits for the next millisecond.</li><li>Turn on <b>clock rollback</b> and generate again. A correct generator refuses to issue IDs.</li></ol><h3>What to notice</h3><ul><li>The time bits sit at the top, so IDs sort by time.</li><li>Snowflake, UUIDv7 and ULID sort in creation order. UUIDv4 does not.</li></ul><div class="callout tip"><b>Important point</b><p>A Snowflake ID needs a correct clock. If the clock goes backward, the safe choice is to stop.</p></div>`,
+  real:[{co:'Twitter · Discord · Instagram', tier:'confirmed', text:'Twitter introduced Snowflake (2010, epoch 1288834974657 ms). Discord uses Snowflake-format IDs. Instagram used 41 time bits + 13 shard bits + 10 sequence bits.', src:'Twitter Engineering (2010), Discord docs, Instagram Engineering (2012)'}],
   mount(host){
     const EPOCHS = {custom:1577836800000n, twitter:1288834974657n};
     let ep = 'custom', dc = 3, wk = 7, lastMs = -1n, seq = 0n, rollback = false, ids = [], waits = 0;
     const out = el('div'); const list = el('div', {class:'lab-out', style:{maxHeight:'200px', borderRadius:'10px', border:'1px solid var(--border)'}});
     function gen(nowMs){
       let ms = BigInt(nowMs != null ? nowMs : Date.now()); if (rollback) ms = (lastMs > 0n ? lastMs : ms) - 5n; /* simulate the clock stepping 5 ms behind the last issued ID */
-      if (ms < lastMs) throw new Error(`Clock moved backwards by ${lastMs - ms} ms — refusing to generate IDs`);
+      if (ms < lastMs) throw new Error(`Clock moved backwards by ${lastMs - ms} ms. Refusing to generate IDs`);
       if (ms === lastMs){ seq = (seq + 1n) & 4095n; if (seq === 0n){ waits++; ms = lastMs + 1n; } } else seq = 0n;
       lastMs = ms; const t = ms - EPOCHS[ep];
       return (t << 22n) | (BigInt(dc) << 17n) | (BigInt(wk) << 12n) | seq;
@@ -128,8 +128,8 @@ SDA.register({kind:'playground', id:'snowflake', module:'distributed', icon:'❄
 /* ---------------- #27 Vector clocks & CRDT counters ---------------- */
 try {
 SDA.register({kind:'playground', id:'vector-clock', module:'distributed', icon:'🕰️', title:'Vector clocks, Lamport clocks & CRDT counters',
-  summary:'Build a space-time diagram with three processes: create events, send messages, deliver them in any order, then compare any two events. A second tab merges CRDT counters across replicas.',
-  explain:`<ul><li>Click two events to compare them. Vector clocks tell you exactly whether one <b>happened before</b> the other or they are <b>concurrent</b>; Lamport numbers can be ordered even for concurrent events.</li><li>Leave messages pending and deliver them late or out of order — the clocks still capture causality.</li><li><b>CRDT tab:</b> increment and decrement on different replicas while “offline”, then sync in any order. The PN-Counter always converges to the true total; the last-write-wins counter loses updates.</li></ul>`,
+  summary:'Build a time diagram with three processes, send messages, deliver them in any order and compare two events. A second tab merges counters across replicas.',
+  explain:`<h3>How to use it</h3><ol><li>Create events and send a message from one process to another. Click two events to compare them.</li><li>Leave messages pending and deliver them late or out of order. Compare again.</li><li>Open the CRDT tab. Change counters on different replicas while offline, then sync in any order.</li></ol><h3>What to notice</h3><ul><li>Vector clocks say exactly whether one event happened before another or they were concurrent.</li><li>A PN-counter always reaches the true total. A last-write-wins counter loses updates.</li></ul><div class="callout tip"><b>Important point</b><p>Clocks that count events can show cause and effect. Wall-clock time cannot.</p></div>`,
   real:[{co:'Amazon Dynamo · Riak · Redis Enterprise', tier:'confirmed', text:'Dynamo used vector clocks to detect conflicting versions; Riak and Redis Enterprise Active-Active ship CRDT counters and sets.', src:'DeCandia et al. (2007); Riak and Redis documentation'}],
   mount(host, api){
     ui.tabs(host, [{id:'clk', label:'🕰️ Clocks', render:p => clocks(p)}, {id:'crdt', label:'🧬 CRDT counters', render:p => crdts(p)}]);
@@ -154,7 +154,7 @@ SDA.register({kind:'playground', id:'vector-clock', module:'distributed', icon:'
         pendBox.innerHTML = ''; pendBox.append(el('span', {class:'lab-hint'}, pend.length ? 'In flight (deliver in any order):' : 'No messages in flight.')); pend.forEach(m => pendBox.append(ui.button(`📨 #${m.id} ${PN[m.from]}→${PN[m.to]} deliver`, () => deliver(m.id), 'sm')));
         rel.innerHTML = '';
         if (sel.length === 2){ const [a, b] = sel.map(i => evs[i]); const le = (x, y) => x.vc.every((v, k) => v <= y.vc[k]); const r = le(a, b) && !le(b, a) ? 'ab' : le(b, a) && !le(a, b) ? 'ba' : 'conc'; const nm = e => `${PN[e.p]}${e.id}`;
-          rel.append(el('div', {class:'verdict ' + (r === 'conc' ? 'warn' : 'ok')}, r === 'conc' ? `${nm(a)} [${a.vc}] and ${nm(b)} [${b.vc}] are CONCURRENT: neither vector is ≤ the other. Lamport says L${a.lam} vs L${b.lam} — an order that means nothing causally.` : `${r === 'ab' ? nm(a) : nm(b)} HAPPENED BEFORE ${r === 'ab' ? nm(b) : nm(a)}: every entry of [${(r === 'ab' ? a : b).vc}] ≤ [${(r === 'ab' ? b : a).vc}]. Lamport agrees (L${(r === 'ab' ? a : b).lam} < L${(r === 'ab' ? b : a).lam}).`)); }
+          rel.append(el('div', {class:'verdict ' + (r === 'conc' ? 'warn' : 'ok')}, r === 'conc' ? `${nm(a)} [${a.vc}] and ${nm(b)} [${b.vc}] are CONCURRENT: neither vector is ≤ the other. Lamport says L${a.lam} vs L${b.lam}. That order means nothing about cause and effect.` : `${r === 'ab' ? nm(a) : nm(b)} HAPPENED BEFORE ${r === 'ab' ? nm(b) : nm(a)}: every entry of [${(r === 'ab' ? a : b).vc}] ≤ [${(r === 'ab' ? b : a).vc}]. Lamport agrees (L${(r === 'ab' ? a : b).lam} < L${(r === 'ab' ? b : a).lam}).`)); }
         else rel.append(el('div', {class:'lab-hint'}, 'Click two events to compare them.'));
       }
       const ctl = el('div', {class:'stack'});
@@ -174,7 +174,7 @@ SDA.register({kind:'playground', id:'vector-clock', module:'distributed', icon:'
         const rows = st.map((s, i) => [`<b>Replica ${R[i]}</b>`, `<span class="mono">P[${s.P}] N[${s.N}]</span>`, `<b>${val(s)}</b>`, `<span class="mono">${s.lww.v}</span> <span class="lab-hint">(ts ${s.lww.ts})</span>`]);
         out.innerHTML = ''; out.append(frag(h.table(['Replica', 'PN-Counter state', 'PN value', 'Last-write-wins counter'], rows, [2, 3])));
         const conv = st.every(s => val(s) === val(st[0])), lwwOk = st.every(s => s.lww.v === truth);
-        out.append(el('div', {class:'verdict ' + (conv && val(st[0]) === truth ? 'ok' : 'warn')}, `True total of all increments/decrements: ${truth}. ${conv ? `All PN replicas agree on ${val(st[0])}${val(st[0]) === truth ? ' ✓' : ''}.` : 'PN replicas haven’t all synced yet — keep merging.'} ${conv && !lwwOk ? `The LWW counter shows ${st[0].lww.v}: updates were overwritten and lost.` : ''}`));
+        out.append(el('div', {class:'verdict ' + (conv && val(st[0]) === truth ? 'ok' : 'warn')}, `True total of all increments/decrements: ${truth}. ${conv ? `All PN replicas agree on ${val(st[0])}${val(st[0]) === truth ? ' ✓' : ''}.` : 'PN replicas haven’t all synced yet. Keep merging.'} ${conv && !lwwOk ? `The LWW counter shows ${st[0].lww.v}: updates were overwritten and lost.` : ''}`));
       }
       p.append(el('div', {class:'stack'}, ...R.map((n, i) => el('div', {class:'row'}, el('b', {style:{width:'90px'}}, 'Replica ' + n), ui.button('+1', () => op(i, 1), 'sm ok'), ui.button('−1', () => op(i, -1), 'sm danger')))), el('div', {class:'controls', style:{margin:'10px 0'}}, ui.button('🔄 Sync A ⇄ B', () => merge(0, 1), 'sm'), ui.button('🔄 Sync B ⇄ C', () => merge(1, 2), 'sm'), ui.button('🔄 Sync A ⇄ C', () => merge(0, 2), 'sm'), ui.button('↺ Reset', reset, 'sm ghost')), out, el('p', {class:'lab-hint'}, 'Try: A +1 +1, B +1, C −1 (all “offline”), then sync pairs in any order, even repeatedly. Merge = element-wise max of the P and N vectors.'));
       reset();

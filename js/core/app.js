@@ -437,9 +437,9 @@
     return el(
       "div",
       { class: "tradeoffs" },
-      col("use", "✔", "Use when", t.use),
-      col("avoid", "✘", "Avoid when", t.avoid),
-      col("alt", "⇄", "Alternatives", t.alt),
+      col("use", "✔", "Good fit", t.use),
+      col("avoid", "✘", "Poor fit", t.avoid),
+      col("alt", "⇄", "Other options", t.alt),
     );
   }
   SDA.tradeoffsEl = tradeoffsEl;
@@ -487,6 +487,17 @@
     }
   }
   SDA.mountPg = mountPg;
+  // Reader-facing wording for headings written inside lesson HTML. The lesson data keeps the old
+  // headings because lesson-check requires some of them. This only changes what the page shows.
+  const PLAIN_HEADINGS = [
+    [/<h3>\s*A small example\s*<\/h3>/i, ""],
+    [/<h3>\s*What happens behind the scenes\s*<\/h3>/i, ""],
+    [/<h3>\s*Everyday comparison\s*<\/h3>/i, "<h3>Think of it like this</h3>"],
+    [/<h3>\s*How we handle it\s*<\/h3>/i, "<h3>What we do about it</h3>"],
+    [/<h3>\s*When to use which\s*<\/h3>/i, "<h3>Which one to pick</h3>"],
+    [/Important point<\/b>/g, "Remember this</b>"],
+  ];
+  const plain = (html) => PLAIN_HEADINGS.reduce((h, [rx, to]) => h.replace(rx, to), String(html || ""));
   function renderTry(b, t) {
     (Array.isArray(t) ? t : [t]).forEach((x) => {
       if (x.note) b.insertAdjacentHTML("beforeend", `<p>${x.note}</p>`);
@@ -508,14 +519,20 @@
     });
   }
   function renderHow(b, how) {
-    if (how.intro) b.insertAdjacentHTML("beforeend", `<p>${how.intro}</p>`);
-    if (how.steps)
+    if (how.intro) b.insertAdjacentHTML("beforeend", `<p>${plain(how.intro)}</p>`);
+    if (how.steps) {
+      const pictured = how.steps.length && how.steps.every((s) => s && typeof s === "object");
       b.insertAdjacentHTML(
         "beforeend",
-        '<ol class="steps">' +
-          how.steps.map((s) => `<li>${s}</li>`).join("") +
-          "</ol>",
+        pictured
+          ? '<ol class="picture-steps">' +
+              how.steps.map((s) => `<li><span class="picture-steps-icon" aria-hidden="true">${esc(s.icon)}</span><div><h3>${esc(s.title)}</h3><p>${esc(s.text)}</p></div></li>`).join("") +
+              "</ol>"
+          : '<ol class="steps">' +
+              how.steps.map((s) => `<li>${s}</li>`).join("") +
+              "</ol>",
       );
+    }
     if (how.diagram) new SDA.Diagram(b, how.diagram);
     if (how.stepper) ui.stepper(b, how.stepper);
     if (how.mount) {
@@ -523,7 +540,7 @@
       b.append(host);
       how.mount(host, api(host));
     }
-    if (how.html) b.insertAdjacentHTML("beforeend", how.html);
+    if (how.html) b.insertAdjacentHTML("beforeend", plain(how.html));
   }
 
   /* ---------------- LESSON ---------------- */
@@ -546,7 +563,7 @@
       ]),
     );
     c.append(el("h1", { class: "page-title" }, l.title));
-    if (l.summary) c.append(el("p", { class: "lead", html: l.summary }));
+    if (l.summary) c.append(el("p", { class: "lead", html: "<strong>In one line.</strong> " + l.summary }));
     c.append(
       el(
         "div",
@@ -560,10 +577,11 @@
         ),
       ),
     );
-    c.append(el("div", { class: "lesson-head" }, doneCheck(l.id)));
+    const lessonHead = el("div", { class: "lesson-head" }, doneCheck(l.id));
+    c.append(lessonHead);
     let n = 0;
     const hasDeep = !!(l.deep || (l.how && l.how.deep));
-    const sec_ = (key, title, build) => {
+    const sec_ = (key, title, build, sub) => {
       const s = el("section", {
         class: "sec reveal",
         id: key,
@@ -578,7 +596,9 @@
             { class: "sec-n", "aria-hidden": "true" },
             String(++n),
           ),
-          el("h2", null, title),
+          sub
+            ? el("div", { class: "sec-t" }, el("h2", null, title), el("p", { class: "sec-sub" }, sub))
+            : el("h2", null, title),
         ),
       );
       const body = el("div", { class: "prose" });
@@ -592,14 +612,17 @@
       c.append(s);
     };
     if (l.problem)
-      sec_("problem", "The problem", (b) => (b.innerHTML = l.problem));
+      sec_("problem", "A small example", (b) => (b.innerHTML = plain(l.problem)),
+        "One real situation, so the idea has something to hold on to.");
     if (l.intuition)
       sec_(
         "intuition",
-        "Intuition",
+        "The everyday picture",
         (b) => (b.innerHTML = `<blockquote>💡 ${l.intuition}</blockquote>`),
+        "The same idea, in daily life.",
       );
-    if (l.how) sec_("how", "How it works", (b) => renderHow(b, l.how));
+    if (l.how) sec_("how", "Step by step: follow one example", (b) => renderHow(b, l.how),
+      "See what happens at each step, from start to finish.");
     if (hasDeep) {
       const host = c.querySelector("#how .prose") ||
         c.querySelector("#intuition .prose") ||
@@ -610,32 +633,48 @@
         "aria-expanded": "false",
         "aria-controls": "deep",
       }, "Go deeper");
+      // Name what is inside, so the reader knows if it is worth opening.
+      const deepHtml = (l.how?.deep || "") + (l.deep || "");
+      const topics = [...deepHtml.matchAll(/<b>([^<]{3,40})<\/b>/g)].map((m) => m[1].replace(/[.:]$/, "")).slice(0, 3);
+      const goLabel = topics.length ? "Go deeper: " + topics.join(", ") : "Go deeper";
+      button.textContent = goLabel;
       const region = el("section", {
         id: "deep",
         class: "callout deep depth-content",
         hidden: true,
-        "data-toc": "Deep dive",
+        tabindex: "-1",
+        "data-toc": "Go deeper",
         "data-deep": "1",
-      }, el("h3", null, "Deep dive"));
+      }, el("h3", null, "Go deeper"));
       if (l.how?.deep) region.insertAdjacentHTML("beforeend", l.how.deep);
       if (l.deep) region.insertAdjacentHTML("beforeend", l.deep);
       button.addEventListener("click", () => {
         const open = button.getAttribute("aria-expanded") !== "true";
         button.setAttribute("aria-expanded", String(open));
-        button.textContent = open ? "Hide deeper explanation" : "Go deeper";
+        button.textContent = open ? "Hide deep dive" : goLabel;
         region.hidden = !open;
+        if (open) {
+          region.classList.add("in");
+          region.scrollIntoView({
+            behavior: SDA.reduced ? "auto" : "smooth",
+            block: "start",
+          });
+          region.focus({ preventScroll: true });
+        }
       });
       host.append(button, region);
       if (sec === "deep") button.click();
     }
     if (l.tradeoffs)
-      sec_("tradeoffs", "Trade-offs", (b) =>
+      sec_("tradeoffs", "When to use it, and when not to", (b) =>
         b.append(tradeoffsEl(l.tradeoffs)),
+        "A quick way to decide if this fits your case.",
       );
     if (l.real)
-      sec_("real", "Real-world examples", (b) => b.append(realEl(l.real)));
+      sec_("real", "Who uses this in real life", (b) => b.append(realEl(l.real)),
+        "Real companies, and what they chose.");
     if (l.mistakes || l.interview)
-      sec_("mistakes", "Mistakes & interview angle", (b) =>
+      sec_("mistakes", "Common mistakes, and what interviewers ask", (b) =>
         b.append(
           el(
             "div",
@@ -662,8 +701,10 @@
               : null,
           ),
         ),
+        "What goes wrong in practice, and how to answer in an interview.",
       );
-    if (l.tryit) sec_("tryit", "Try it", (b) => renderTry(b, l.tryit));
+    if (l.tryit) sec_("tryit", "Try it yourself", (b) => renderTry(b, l.tryit),
+      "Play with it, and see the idea work.");
     if (l.sources)
       c.append(
         el(
@@ -679,7 +720,7 @@
                 color: "var(--faint)",
               },
             },
-            "Sources & further reading",
+            "Where to read more",
           ),
           el("ul", {
             class: "prose",
@@ -1728,13 +1769,13 @@
     );
     const method = el("div", { class: "method" });
     [
-      ["The problem", "a real situation"],
-      ["Intuition", "everyday analogy"],
-      ["How it works", "animated diagram"],
-      ["Trade-offs", "use / avoid / alternatives"],
-      ["Real world", "named companies"],
-      ["Mistakes", "+ interview angle"],
-      ["Try it", "break it, fix it"],
+      ["A small example", "a real situation"],
+      ["The everyday picture", "everyday analogy"],
+      ["Step by step", "animated diagram"],
+      ["When to use it", "good fit / poor fit / other options"],
+      ["Real life", "named companies"],
+      ["Common mistakes", "+ interview angle"],
+      ["Try it yourself", "break it, fix it"],
     ].forEach(([t, d], i) =>
       method.append(
         el(
@@ -2202,13 +2243,21 @@
       curMod = p && p.module;
     }
     const curLesson = route.name === "l" ? route.args[0] : null;
+    const curMObj = curMod ? SDA.modules.find((m) => m.id === curMod) : null;
+    const curLevel = curMObj ? curMObj.level : null;
+    // With no choice made yet, open the level you are in. Elsewhere, open the level of the first unfinished module.
+    const nextMod = SDA.modules.find((m) => modProgress(m).done < modProgress(m).total) || SDA.modules[0];
+    const openLevel = curLevel || (nextMod && nextMod.level);
     const isActive = (href) =>
       href === "#/"
         ? hash === "#/" || hash === "" || hash === "#"
         : hash === href || hash.startsWith(href + "/");
     sb.innerHTML = "";
-    const group = (key, title, build) => {
-      const collapsed = !!Store.data.sb[key];
+    // A group is open if the reader chose so. With no choice yet, only the group that holds this page starts open.
+    const group = (key, title, build, opt) => {
+      opt = opt || {};
+      const saved = Store.data.sb[key];
+      const collapsed = opt.here ? false : saved === undefined ? !opt.open : !!saved;
       const g = el("div", {
         class: "sb-group" + (collapsed ? " collapsed" : ""),
       });
@@ -2219,7 +2268,8 @@
           class: "sb-title",
           "aria-expanded": String(!collapsed),
         },
-        title,
+        el("span", { class: "sb-title-t" }, title),
+        opt.meta ? el("span", { class: "sb-meta" }, opt.meta) : null,
         el("span", { class: "chev", "aria-hidden": "true" }, "▾"),
       );
       btn.addEventListener("click", () => {
@@ -2234,7 +2284,7 @@
       g.append(btn, ul);
       sb.append(g);
     };
-    const link = (href, icon, label, count) =>
+    const link = (href, icon, label) =>
       el(
         "li",
         null,
@@ -2247,33 +2297,46 @@
           },
           el("span", { class: "ic", "aria-hidden": "true" }, icon),
           el("span", { class: "lbl" }, label),
-          count != null ? el("span", { class: "count" }, String(count)) : null,
         ),
       );
-    group("explore", "Explore", (ul) => {
+    const onHref = (hrefs) => hrefs.some((h) => isActive(h));
+    // "Continue" shortcut: the last page you opened, unless you are on it now.
+    const last = Store.data.last;
+    const firstLesson = SDA.modules[0] && SDA.modules[0].lessons[0];
+    const goHref = last && last.href ? last.href : firstLesson ? "#/l/" + firstLesson.id : null;
+    if (goHref && !isActive(goHref)) {
+      sb.append(
+        el(
+          "a",
+          { class: "sb-continue", href: goHref },
+          el("span", { class: "sb-continue-k" }, last ? "Continue" : "Start here"),
+          el("span", { class: "sb-continue-t" }, last ? `${last.icon || "📘"} ${last.title}` : firstLesson.title),
+        ),
+      );
+    }
+    const exploreNav = SDA.nav.filter((n) => !n.group || n.group === "explore");
+    const refNav = exploreNav.filter((n) => n.href === "#/page/cheatsheets");
+    const practiceNav = exploreNav.filter((n) => n.href !== "#/page/cheatsheets");
+    const practiceHrefs = ["#/playgrounds", "#/labs", ...practiceNav.map((n) => n.href), "#/pg", "#/lab", "#/case"];
+    const refHrefs = ["#/glossary", ...refNav.map((n) => n.href)];
+    group("explore", "Start", (ul) => {
       ul.append(link("#/", "🏠", "Home"), link("#/roadmap", "🗺️", "Roadmap"));
-      if (SDA.playgrounds.size)
-        ul.append(
-          link("#/playgrounds", "🧪", "Playgrounds", SDA.playgrounds.size),
-        );
-      if (SDA.labs.size)
-        ul.append(link("#/labs", "⌨️", "Code labs", SDA.labs.size));
-      if (SDA.glossary.size)
-        ul.append(link("#/glossary", "📖", "Glossary", SDA.glossary.size));
-      SDA.nav
-        .filter((n) => !n.group || n.group === "explore")
-        .forEach((n) => {
-          let cnt = null;
-          try {
-            cnt = n.count ? n.count() : null;
-          } catch (e) {}
-          ul.append(link(n.href, n.icon || "•", n.label, cnt));
-        });
-    });
+    }, { open: true });
+    group("practice", "Practice", (ul) => {
+      if (SDA.playgrounds.size) ul.append(link("#/playgrounds", "🧪", "Playgrounds"));
+      if (SDA.labs.size) ul.append(link("#/labs", "⌨️", "Code labs"));
+      practiceNav.forEach((n) => ul.append(link(n.href, n.icon || "•", n.label)));
+    }, { here: onHref(practiceHrefs) && !curMod });
+    group("reference", "Reference", (ul) => {
+      if (SDA.glossary.size) ul.append(link("#/glossary", "📖", "Glossary"));
+      refNav.forEach((n) => ul.append(link(n.href, n.icon || "•", n.label)));
+    }, { here: onHref(refHrefs) });
     SDA.LEVELS.forEach((lv) => {
       const mods = SDA.modules.filter((m) => m.level === lv.id);
       const extras = SDA.nav.filter((n) => n.group === lv.id);
       if (!mods.length && !extras.length) return;
+      const lvDone = mods.reduce((n, m) => n + modProgress(m).done, 0);
+      const lvTotal = mods.reduce((n, m) => n + modProgress(m).total, 0);
       group("lv-" + lv.id, `${lv.icon} ${lv.name}`, (ul) => {
         mods.forEach((m) => {
           const pr = modProgress(m);
@@ -2296,13 +2359,12 @@
                 "span",
                 { class: "lbl" },
                 m.title,
-                el(
-                  "div",
-                  { class: "sb-mini", "aria-hidden": "true" },
-                  el("i", { style: { width: pr.pct + "%" } }),
-                ),
               ),
-              el("span", { class: "count" }, `${pr.done}/${pr.total}`),
+              el(
+                "span",
+                { class: "count" + (pr.total && pr.done === pr.total ? " all" : "") },
+                pr.total && pr.done === pr.total ? "✓" : `${pr.done}/${pr.total}`,
+              ),
             ),
           );
           if (curMod === m.id) {
@@ -2337,15 +2399,21 @@
           ul.append(li);
         });
         extras.forEach((n) => {
-          let cnt = null;
-          try {
-            cnt = n.count ? n.count() : null;
-          } catch (e) {}
-          ul.append(link(n.href, n.icon || "•", n.label, cnt));
+          ul.append(link(n.href, n.icon || "•", n.label));
         });
+      }, {
+        open: lv.id === openLevel,
+        here: lv.id === curLevel || extras.some((n) => isActive(n.href)),
+        meta: lvTotal ? `${lvDone}/${lvTotal}` : null,
       });
     });
     sb.scrollTop = keep;
+    // Keep "you are here" visible inside the sidebar.
+    const act = sb.querySelector(".sb-sub a.active, .sb-link.active");
+    if (act) {
+      const r = act.getBoundingClientRect(), b = sb.getBoundingClientRect();
+      if (r.height && (r.top < b.top + 8 || r.bottom > b.bottom - 8)) sb.scrollTop += r.top - b.top - b.height / 3;
+    }
   }
   function updateRing() {
     const o = overall();

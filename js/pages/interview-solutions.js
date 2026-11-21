@@ -177,7 +177,9 @@ function renderOne(ctx, s){
   // mode switch
   let mode = ls.get(MODE_KEY, 'read');
   const seg = el('div', {class:'seg wrap', role:'group', 'aria-label':'How to use this solution'});
-  const mk = (m, t) => { const b = el('button', {type:'button', 'aria-pressed':String(mode === m)}, t); b.addEventListener('click', () => { if (mode === m) return; mode = m; ls.set(MODE_KEY, m); seg.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); draw(); }); return b; };
+  const modeBtns = {};
+  const setMode = m => { if (mode === m) return; mode = m; ls.set(MODE_KEY, m); Object.entries(modeBtns).forEach(([k, x]) => x.setAttribute('aria-pressed', String(k === m))); draw(); };
+  const mk = (m, t) => { const b = el('button', {type:'button', 'aria-pressed':String(mode === m)}, t); modeBtns[m] = b; b.addEventListener('click', () => setMode(m)); return b; };
   seg.append(mk('read', '📖 Read the walkthrough'), mk('mock', '🎤 Mock interview: answer first'));
   c.append(el('div', {class:'row', style:{flexWrap:'wrap', gap:'10px', margin:'14px 0 6px'}}, seg));
   const nav = el('div', {class:'pill-row', style:{margin:'8px 0 4px'}}, ...PH.map(([k, t, m, ic], i) => el('a', {class:'chip', href:'#ph-' + k}, `${ic} ${i + 1} ${t} · ${m}′`)));
@@ -201,6 +203,15 @@ function renderOne(ctx, s){
     });
     const refs = (s.refs || []).map(r => SDA.resolve(r)).filter(Boolean);
     if (refs.length) body.append(el('h3', {style:{margin:'26px 0 8px'}}, '📚 Go deeper'), el('div', {class:'pill-row'}, ...refs.map(r => el('a', {class:'chip', href:r.href}, `${r.icon || ''} ${r.title}`))));
+    drawSwap();
+  }
+  // At the end of the page, point to the other mode, because the switch is far above.
+  const swapSlot = el('div');
+  function drawSwap(){
+    swapSlot.innerHTML = '';
+    const read = mode === 'read';
+    const go = ui.button(read ? '🎤 Try the mock interview' : '📖 Read the walkthrough', () => { setMode(read ? 'mock' : 'read'); seg.scrollIntoView({behavior:SDA.reduced ? 'auto' : 'smooth', block:'center'}); }, 'sm primary');
+    swapSlot.append(el('div', {class:'callout tip', style:{marginTop:'24px'}}, el('b', {class:'ct'}, read ? 'Done reading? Test yourself.' : 'Stuck on a phase? See the full answer.'), prose(read ? '<p>Switch to mock interview. You answer each phase first, then see how a strong candidate does it.</p>' : '<p>Switch to the walkthrough to read all 8 phases in one go.</p>'), go));
   }
   function mockIntro(){
     const clock = el('span', {class:'chip mono', style:{fontSize:'15px'}}, '00:00'), where = el('span', {class:'muted'}, 'Clock not started.');
@@ -211,6 +222,7 @@ function renderOne(ctx, s){
     }, 'sm');
     return el('div', {class:'callout tip'}, el('b', {class:'ct'}, 'Mock interview mode'), prose('<p>Answer each phase in the box (out loud is even better), then reveal how a strong candidate would do it. Phases unlock in order, like the real thing. Your answers are saved in this browser.</p>'), el('div', {class:'row', style:{flexWrap:'wrap', gap:'10px'}}, b, clock, where));
   }
+  c.append(swapSlot);
   draw();
   const all = [...SDA.solutions.values()], i = all.indexOf(s), prev = all[i - 1], next = all[i + 1];
   c.append(el('div', {class:'row', style:{justifyContent:'space-between', marginTop:'28px', flexWrap:'wrap', gap:'8px'}}, prev ? el('a', {class:'btn sm ghost', href:'#/page/interview-solutions/' + prev.id}, '← ' + prev.title) : el('span'), next ? el('a', {class:'btn sm', href:'#/page/interview-solutions/' + next.id}, next.title + ' →') : el('span')));

@@ -13,15 +13,15 @@ function traceDemo(host){
   function build(){
     const S = []; let id = 0; const tid = '4bf92f3577b34da6';
     const span = (name, svc, start, dur, parent, extra) => { const s = {id:(++id).toString(16).padStart(4, '0'), name, svc, start, dur, end:start + dur, parent, kids:[], extra:extra || ''}; S.push(s); if (parent) parent.kids.push(s); return s; };
-    const root = span('GET /restaurants/42', 'gateway', 0, 0, null);
+    const root = span('GET /checkin/AB123', 'gateway', 0, 0, null);
     const auth = span('auth.verifyToken', 'auth', 2, 6, root);
     let t = auth.end + 1;
     const branch = (fn) => { const s0 = t; const e = fn(s0); if (!P.parallel) t = e + 1; return e; };
     const ends = [];
-    ends.push(branch(s0 => { const c = span('catalog.getMenu', 'catalog', s0, 0, root); let ct = s0 + 2; const n = P.nplus1 ? 12 : 1; for (let i = 0; i < n; i++){ const q = span(P.nplus1 ? `SELECT * FROM dishes WHERE id=$1  (#${i + 1})` : 'SELECT * FROM dishes WHERE restaurant_id=$1', 'postgres', ct, P.nplus1 ? 9 : 14, c); ct = q.end + 1; } c.dur = ct + 3 - s0; c.end = s0 + c.dur; return c.end; }));
-    ends.push(branch(s0 => { const r = span('reviews.summary', 'reviews', s0, 0, root); let rt = s0 + 1; const ch = span('redis GET reviews:42', 'redis', rt, 1.2, r, P.cacheHit ? 'hit' : 'miss'); rt = ch.end + .5; if (!P.cacheHit){ const q = span('SELECT avg(rating)… FROM reviews', 'postgres', rt, P.slowDb ? 820 : 35, r, P.slowDb ? 'Seq Scan (missing index)' : 'Index Scan'); rt = q.end + 1; } r.dur = rt + 1 - s0; r.end = s0 + r.dur; return r.end; }));
-    ends.push(branch(s0 => { const o = span('offers.forUser', 'offers', s0, 22, root); return o.end; }));
-    ends.push(branch(s0 => { const e = span('eta.estimate', 'eta', s0, 48, root); return e.end; }));
+    ends.push(branch(s0 => { const c = span('booking.getBooking', 'booking', s0, 0, root); let ct = s0 + 2; const n = P.nplus1 ? 12 : 1; for (let i = 0; i < n; i++){ const q = span(P.nplus1 ? `SELECT * FROM segments WHERE id=$1  (#${i + 1})` : 'SELECT * FROM bookings WHERE pnr=$1', 'postgres', ct, P.nplus1 ? 9 : 14, c); ct = q.end + 1; } c.dur = ct + 3 - s0; c.end = s0 + c.dur; return c.end; }));
+    ends.push(branch(s0 => { const r = span('seats.availability', 'seats', s0, 0, root); let rt = s0 + 1; const ch = span('redis GET seats:AB123', 'redis', rt, 1.2, r, P.cacheHit ? 'hit' : 'miss'); rt = ch.end + .5; if (!P.cacheHit){ const q = span('SELECT count(*)… FROM seats', 'postgres', rt, P.slowDb ? 820 : 35, r, P.slowDb ? 'Seq Scan (missing index)' : 'Index Scan'); rt = q.end + 1; } r.dur = rt + 1 - s0; r.end = s0 + r.dur; return r.end; }));
+    ends.push(branch(s0 => { const o = span('baggage.allowance', 'baggage', s0, 22, root); return o.end; }));
+    ends.push(branch(s0 => { const e = span('gate.info', 'gate', s0, 48, root); return e.end; }));
     root.dur = Math.max(...ends) + 3; root.end = root.dur;
     const crit = new Set(); const mark = s => { crit.add(s); if (!s.kids.length) return; const last = s.kids.reduce((a, b) => b.end > a.end ? b : a); mark(last); }; mark(root); crit.add(auth); if (!P.parallel) root.kids.forEach(mark);
     return {S, root, crit, tid};
@@ -45,9 +45,9 @@ function traceDemo(host){
     S.slice(0, 9).forEach(s => logs.append(el('div', {class:'ln'}, `{"ts":"…${(s.start / 1000).toFixed(3)}","level":"${s.dur > 300 ? 'WARN' : 'INFO'}","service":"${s.svc}","trace_id":"${tid}","span_id":"${s.id}","msg":"${s.name.replace(/"/g, '')}","duration_ms":${s.dur.toFixed(1)}}`)));
   }
   host.append(el('div', {class:'controls'},
-    ui.toggle({label:'Reviews cache hit', checked:true, onChange:v => { P.cacheHit = v; run(); }}).el,
+    ui.toggle({label:'Seat map cache hit', checked:true, onChange:v => { P.cacheHit = v; run(); }}).el,
     ui.toggle({label:'Missing DB index (slow query)', checked:false, onChange:v => { P.slowDb = v; run(); }}).el,
-    ui.toggle({label:'N+1 queries in catalog', checked:false, onChange:v => { P.nplus1 = v; run(); }}).el,
+    ui.toggle({label:'N+1 queries in booking lookup', checked:false, onChange:v => { P.nplus1 = v; run(); }}).el,
     ui.toggle({label:'Call branches in parallel', checked:true, onChange:v => { P.parallel = v; run(); }}).el), out,
     el('b', {style:{display:'block', marginTop:'10px'}}, 'Structured logs for the same request (joined by trace_id)'), logs);
   run();
@@ -197,257 +197,328 @@ function finopsCalc(host){
 const lessons = [
 {
   id:'logs-metrics-traces', title:'Logs, metrics and traces (OpenTelemetry)', minutes:12, tags:['logs','metrics','traces','OpenTelemetry','span','correlation'],
-  summary:'Metrics tell you that something is wrong, traces tell you where, and logs tell you why. Correlate all three with a shared trace ID, and instrument once with OpenTelemetry.',
-  problem:`<p>Customers say the restaurant page is “sometimes slow”. The dashboard shows p99 latency doubled at 8 PM. But the page touches a gateway, auth, catalog, reviews, offers, ETA, Redis and Postgres. Which one? Grepping logs on 40 servers for “slow” finds nothing useful. You need to follow <i>one</i> slow request through every service.</p>`,
-  intuition:`A courier parcel. <b>Metrics</b> are the daily dashboard (“2% of parcels late today”). A <b>trace</b> is one parcel’s tracking history (“picked up 10:02, hub 11:40, out for delivery 18:55”), which shows where the time went. <b>Logs</b> are the notes at each step (“address unclear, called customer”), which explain why.`,
+  summary:'Metrics show that something is wrong, traces show where, and logs show why. A shared trace ID ties them together, and OpenTelemetry collects all three the same way.',
+  problem:`<h3>A small example</h3><p>Passengers say check-in is “sometimes slow”. The dashboard shows that p99 latency, the time that the slowest 1% of requests take, doubled at 5 AM.</p><ul><li>One check-in touches the gateway, login, booking, seats and baggage services.</li><li>Searching logs on 40 servers for “slow” finds nothing useful.</li><li>You need to follow one slow request through every step.</li></ul><p>Which step is slow, and why?</p>`,
   how:{
-    steps:[`<b>Metrics</b>: cheap numeric time series (counters, gauges, histograms) aggregated over time, such as request rate, error rate and latency histograms. Use them for dashboards and alerts.`, `<b>Logs</b>: timestamped events. Make them <b>structured</b> (JSON with fields), with consistent keys (service, trace_id, user/tenant, error).`, `<b>Traces</b>: a tree of <b>spans</b>, each a timed operation (name, start, duration, attributes, parent). Context (trace_id, span_id) is propagated in headers (W3C <code>traceparent</code>) across every call.`, `<b>Correlate</b>: logs carry trace_id; metric exemplars link a latency spike to example traces; dashboards jump to traces, traces to logs.`, `<b>OpenTelemetry</b>: one vendor-neutral set of APIs/SDKs, auto-instrumentation and a Collector that receives, processes (sampling, redaction) and exports to any backend.`],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow one slow check-in request from the gateway to the database.</p>',
+    steps:[
+      {icon:'📈', title:'Notice with metrics', text:'A metric is a number tracked over time, such as errors per minute. It tells you that something is wrong.'},
+      {icon:'🪪', title:'Tag the request', text:'The gateway gives the request a trace ID. Every service passes that ID along in its calls.'},
+      {icon:'🧭', title:'Find the step with a trace', text:'A trace is a tree of spans. A span is one timed step, such as the seat lookup.'},
+      {icon:'📝', title:'Read the logs', text:'Logs are notes that each service writes. Searching them by trace ID shows why the seat query was slow.'},
+      {icon:'🔌', title:'Collect it the same way', text:'OpenTelemetry is a standard toolkit. It collects metrics, traces and logs from every programming language in the same way.'}
+    ],
     mount:host => traceDemo(host),
-    deep:`<p><b>Cost and cardinality:</b> each unique label combination is a new time series. Labels like user_id or full URL explode metric cardinality and cost, so put those in logs or trace attributes instead. Logs are the most expensive per byte: sample debug logs, keep error logs, and set retention by value.</p><p><b>Sampling traces:</b> <i>head sampling</i> decides at the start (e.g. 1%), which is cheap but misses rare slow requests. <i>Tail sampling</i> (in the Collector) decides after the trace completes, so it can keep all errors and slow traces and a sample of the rest, at the cost of buffering spans.</p><p><b>Histograms, not averages:</b> record latency as histograms (fixed or exponential buckets) so you can compute p95/p99 across instances; you cannot average percentiles from different hosts.</p>`
+    html:`<h3>Everyday comparison</h3><p>Think of a courier parcel.</p><div class="simple-table">${h.table(['Parcel', 'Observability'], [['The daily dashboard: 2% of parcels are late', 'Metrics.'], ['One parcel’s tracking history', 'A trace.'], ['The notes written at each stop', 'Logs.']])}</div><div class="callout tip"><b>Important point</b><p>Metrics say that something is wrong, traces say where, and logs say why. The trace ID connects them.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Question', 'Use'], [['Is something wrong right now?', 'Metrics'], ['Which step is slow?', 'Traces'], ['Why did that step fail?', 'Logs']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Each unique mix of label values is one time series. Say 5 services, 4 status codes and 20 endpoints give 5 × 4 × 20 = 400 series. Add a passenger ID label with 1,000,000 passengers and it becomes 400 × 1,000,000 = 400,000,000 series. Keep such values in logs or trace attributes.</p><p>Now sampling. Say 1 request in 1,000 is slow. In 100,000 requests, 100 are slow. Keeping 1% of traces at random keeps 1% of those, which is 1 slow trace. Tail sampling decides after the trace ends, so it can keep all 100.</p><h4>How it works inside</h4><p>The trace ID travels in an HTTP header called <code>traceparent</code>. It holds a version, a trace ID of 32 hex characters, a span ID of 16 hex characters and a flags byte. Each service copies the trace ID and makes a new span ID.</p><p>Write logs as JSON with fields such as service and trace ID. Then one search by trace ID finds every line from one check-in.</p>`
   },
-  tradeoffs:{use:[`All three signals for any multi-service system, correlated by trace_id`, `OpenTelemetry to avoid locking instrumentation to one vendor`], avoid:[`Unstructured printf logs you can’t query`, `High-cardinality metric labels (user IDs, request IDs)`, `100% trace sampling at high traffic without a budget`], alt:[`Profiling (continuous CPU/memory profiles) for code-level hot spots`, `Real-user monitoring (RUM) for client-side performance`, `eBPF-based auto-instrumentation`]},
+  tradeoffs:{use:[`Use all three signals for check-in and join them by trace ID.`, `Use OpenTelemetry so instrumentation does not lock the team to one vendor.`], avoid:[`Do not write unstructured logs that nobody can query.`, `Do not label metrics with passenger IDs.`, `Do not keep 100% of traces at high traffic without a budget.`], alt:[`Use profiling to find slow code lines inside one service.`, `Use real-user monitoring to see what passengers’ phones experience.`]},
   real:[
-    {co:'Google Dapper', tier:'confirmed', text:'Google’s Dapper paper (2010) described low-overhead, sampled distributed tracing with trace and span IDs propagated through RPCs. It inspired Zipkin, Jaeger and OpenTelemetry.', src:'Sigelman et al., “Dapper, a Large-Scale Distributed Systems Tracing Infrastructure”, Google Technical Report (2010)'},
-    {co:'Uber Jaeger', tier:'confirmed', text:'Uber built and open-sourced Jaeger for distributed tracing across its microservices; it is a CNCF-graduated project.', src:'Uber Engineering, “Evolving Distributed Tracing at Uber Engineering” (2017); Jaeger documentation'},
-    {co:'OpenTelemetry', tier:'confirmed', text:'OpenTelemetry formed in 2019 by merging OpenTracing and OpenCensus under the CNCF, and provides APIs, SDKs and the Collector for traces, metrics and logs.', src:'OpenTelemetry documentation'}
+    {co:'Google Dapper', tier:'confirmed', text:'Google’s 2010 Dapper paper described low-cost sampled tracing, with trace and span IDs passed through calls. It inspired Zipkin, Jaeger and OpenTelemetry.', src:'Sigelman et al., Dapper (2010)'},
+    {co:'OpenTelemetry', tier:'confirmed', text:'OpenTelemetry started in 2019 by merging OpenTracing and OpenCensus. It offers APIs, SDKs and a Collector for traces, metrics and logs.', src:'OpenTelemetry documentation'}
   ],
-  mistakes:[`Logging without trace_id, so you can’t connect logs across services`, `Averaging latency instead of using percentiles from histograms`, `Putting user IDs in metric labels and exploding cardinality and cost`],
-  interview:[`Name what you’d measure (RED per service), how you’d trace a slow request, and how logs link via trace_id`, `Mention sampling and cardinality as cost controls`],
-  tryit:{note:'Toggle the cache miss, missing index and N+1 queries above and watch the critical path change. Then classify:', mount:host => sortGame(host, [
-    {t:'p99 latency of /checkout over the last hour', c:'m', why:'Aggregated numeric time series.'},
-    {t:'“Payment declined: insufficient funds” with order_id', c:'l', why:'A discrete event with context.'},
-    {t:'Time spent in each service for one slow request', c:'t', why:'A trace with spans.'},
-    {t:'Number of HTTP 5xx per minute', c:'m', why:'A counter.'},
-    {t:'Stack trace of an exception', c:'l', why:'Event detail.'},
-    {t:'Which downstream call was on the critical path', c:'t', why:'Span timing and parent/child structure.'}
-  ], [{id:'m', label:'Metric'}, {id:'l', label:'Log'}, {id:'t', label:'Trace'}])},
-  sources:[`Sigelman et al., Dapper (2010)`, `OpenTelemetry and W3C Trace Context specifications`, `Majors, Fong-Jones & Miranda, Observability Engineering (2022)`]
+  mistakes:[`Writing logs without a trace ID, so steps cannot be connected.`, `Averaging latency instead of reading percentiles from histograms.`, `Putting passenger IDs in metric labels.`],
+  interview:[`Say what you would measure, how you would trace a slow request and how logs link by trace ID.`, `Mention sampling and label count as cost controls.`],
+  tryit:[
+    {quiz:[{q:'Which signal shows where the time went inside one slow request?', options:['A CPU metric', 'A trace', 'The daily error count', 'A dashboard average'], answer:1, why:'Spans show how long each step took.'}, {q:'Why should passenger ID not be a metric label?', options:['It is private', 'Metrics cannot hold text', 'It creates one time series per passenger', 'It slows logging'], answer:2, why:'The number of series explodes. Put it in logs or trace attributes.'}]},
+    {note:'Toggle the cache miss, missing index and N+1 queries above and watch the critical path change. Then sort these.', mount:host => sortGame(host, [
+      {t:'p99 latency of check-in over the last hour', c:'m', why:'A number tracked over time.'},
+      {t:'“Seat 14C already taken” with a booking ID', c:'l', why:'A single event with context.'},
+      {t:'Time spent in each service for one slow request', c:'t', why:'A trace with spans.'},
+      {t:'Number of server errors per minute', c:'m', why:'A counter over time.'},
+      {t:'Stack trace of an exception', c:'l', why:'Detail about one event.'},
+      {t:'Which downstream call was on the critical path', c:'t', why:'Span timing and structure.'}
+    ], [{id:'m', label:'Metric'}, {id:'l', label:'Log'}, {id:'t', label:'Trace'}])}
+  ],
+  sources:[`Sigelman et al., Dapper (2010)`, `OpenTelemetry and W3C Trace Context specifications`, `Majors, Fong-Jones and Miranda, Observability Engineering (2022)`]
 },
 {
   id:'golden-signals-red-use', title:'Golden signals, RED and USE', minutes:9, tags:['golden signals','RED','USE','saturation','dashboards'],
-  summary:'Three simple checklists tell you what to measure: the four golden signals (latency, traffic, errors, saturation), RED for request-driven services, and USE for resources.',
-  problem:`<p>Your team has 400 dashboards and nobody knows which ones matter. During an incident people scroll through graphs of JVM threads, disk inodes and Kafka partitions looking for “something red”. You need a small, standard set of signals for every service and every resource, so anyone can tell what is wrong in a minute.</p>`,
-  intuition:`A doctor’s quick check: pulse, temperature, blood pressure, oxygen. Four numbers tell you whether the patient needs attention before any detailed tests. Golden signals are a service’s vital signs.`,
+  summary:'Three short checklists tell you what to measure. The four golden signals fit any user-facing system, RED fits services, and USE fits resources.',
+  problem:`<h3>A small example</h3><p>The check-in team has 400 dashboards. During an outage at 5 AM, people scroll through graphs hunting for something red.</p><ul><li>Nobody knows which graphs matter.</li><li>Every service shows different metrics.</li><li>The on-call engineer loses minutes at each look.</li></ul><p>Which few numbers show that check-in is healthy?</p>`,
   how:{
-    stepper:{title:'Three checklists, one picture', items:[
-      {title:'Latency', tag:'golden', text:'How long requests take, as percentiles (p50/p95/p99), separating successful and failed requests (fast errors can hide slow successes).'},
-      {title:'Traffic', tag:'golden', text:'Demand on the system: requests/s, messages/s, concurrent streams, transactions/s.'},
-      {title:'Errors', tag:'golden', text:'Rate of failing requests: explicit (5xx), implicit (200 with wrong content), and policy (slower than the SLO counts as failed).'},
-      {title:'Saturation', tag:'golden', text:'How “full” the service is: CPU, memory, thread pools, queue depth, connection pools. Often the earliest warning.'},
-      {title:'RED (services)', tag:'Tom Wilkie', text:'For every request-driven service: <b>R</b>ate, <b>E</b>rrors, <b>D</b>uration. The same three graphs for every microservice make dashboards consistent.'},
-      {title:'USE (resources)', tag:'Brendan Gregg', text:'For every resource (CPU, disk, NIC, memory, connection pool): <b>U</b>tilisation, <b>S</b>aturation (queued work), <b>E</b>rrors. A systematic way to find the bottleneck.'}]},
-    deep:`<p><b>Implicit errors:</b> a search API returning 200 with zero results because the index is empty is an error users feel, but HTTP codes don’t show it. Add business-level signals: orders/minute, successful payments, video start success.</p><p><b>Saturation leads, latency lags:</b> queues and pools fill before latency rises sharply (queueing theory: latency explodes near 100% utilisation). Alerting on saturation (e.g. connection pool 90% used) buys time.</p><p><b>Dashboards:</b> one overview per service (RED + key saturation + SLO status + deploy markers), then drill-down dashboards. Put deploys and config changes on graphs, since changes cause most incidents.</p>`
+    intro:'<h3>What happens behind the scenes</h3><p>Pick the vital signs of the check-in service one by one.</p>',
+    steps:[
+      {icon:'⏱️', title:'Latency', text:'How long requests take. Track the slowest 1% (p99) as well as the typical case, and keep failed requests apart.'},
+      {icon:'🚦', title:'Traffic', text:'How many check-ins arrive each second.'},
+      {icon:'❌', title:'Errors', text:'How many requests fail. Include requests that return 200 with a wrong answer.'},
+      {icon:'🪣', title:'Saturation', text:'How full the service is, such as busy threads or waiting requests. It often warns before latency rises.'},
+      {icon:'🧰', title:'Reuse the checklists', text:'The RED method means rate, errors and duration for each service. The USE method means utilisation, saturation and errors for each resource.'}
+    ],
+    stepper:{title:'Where each checklist applies', items:[
+      {title:'Golden signals', tag:'any user-facing system', text:'Latency, traffic, errors and saturation. Put them in your SLOs and on-call dashboards.'},
+      {title:'RED', tag:'for services', text:'Rate, errors and duration for every request-driven service, such as Booking. The same three graphs for every service keep dashboards alike. Tom Wilkie proposed it.'},
+      {title:'USE', tag:'for resources', text:'Utilisation, saturation and errors for every resource, such as CPU, disk or a connection pool. It is a steady way to find the bottleneck. Brendan Gregg proposed it.'}]},
+    html:`<h3>Everyday comparison</h3><p>Think of a doctor’s quick check.</p><div class="simple-table">${h.table(['Doctor’s check', 'Service check'], [['Pulse', 'Traffic'], ['Temperature', 'Latency'], ['Blood pressure', 'Saturation'], ['Oxygen level', 'Errors']])}</div><div class="callout tip"><b>Important point</b><p>A few numbers can show that a service needs attention before any detailed test.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Thing to check', 'Checklist'], [['A service such as Booking', 'RED'], ['A resource such as the database connection pool', 'USE'], ['Check-in as a whole for passengers', 'Golden signals']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Averages hide slow requests. Say 100 check-ins: 98 take 100 ms and 2 take 5,000 ms. The average is (98 × 100 + 2 × 5,000) ÷ 100 = 198 ms. That looks fine. But the p99 is 5,000 ms, so some passengers wait 5 seconds.</p><p>Saturation shows up before latency. In a simple one-server waiting model, the extra wait is service time × use ÷ (1 − use). Say a query takes 20 ms. At 50% use the wait is 20 ms. At 90% it is 180 ms. At 99% it is 1,980 ms.</p><h4>When it goes wrong</h4><p>Errors can hide behind a 200 status. A seat list that returns 200 with zero seats because its index is empty is an error for passengers. Add business signals, such as boarding passes issued per minute, and alert when they drop.</p>`
   },
-  tradeoffs:{use:[`RED for every service, USE for every resource, golden signals in SLOs and on-call dashboards`], avoid:[`Dashboards of every metric you can collect`, `Only infrastructure metrics without user-facing signals`], alt:[`SLO-based dashboards (error budget remaining)`, `Business KPIs as health signals`]},
+  tradeoffs:{use:[`Use RED for each check-in service and USE for each resource such as the database pool.`, `Put golden signals in the on-call dashboard.`], avoid:[`Do not build dashboards of every number you can collect.`, `Do not watch only servers and ignore what passengers feel.`], alt:[`Show the SLO and the remaining error budget on the dashboard.`, `Use business numbers such as check-ins per minute as health signals.`]},
   real:[
-    {co:'Google SRE — four golden signals', tier:'confirmed', text:'The SRE book’s monitoring chapter names latency, traffic, errors and saturation as the four golden signals to measure for any user-facing system.', src:'Site Reliability Engineering (2016), ch. 6 “Monitoring Distributed Systems”'},
-    {co:'RED method', tier:'confirmed', text:'Tom Wilkie (Weaveworks, later Grafana Labs) proposed Rate, Errors, Duration as a standard set of metrics for every microservice.', src:'Tom Wilkie, “The RED Method: key metrics for microservices architecture” (2015/2018)'},
-    {co:'USE method', tier:'confirmed', text:'Brendan Gregg’s USE method checks Utilisation, Saturation and Errors for every resource to find performance bottlenecks quickly.', src:'Brendan Gregg, “The USE Method”; Systems Performance (2nd ed., 2020)'}
+    {co:'Google SRE', tier:'confirmed', text:'The SRE book names latency, traffic, errors and saturation as the four golden signals for any user-facing system.', src:'Site Reliability Engineering (2016), chapter 6'},
+    {co:'RED and USE', tier:'confirmed', text:'Tom Wilkie proposed RED for services. Brendan Gregg proposed USE for resources.', src:'Wilkie, The RED Method. Gregg, The USE Method'}
   ],
-  mistakes:[`Mixing failed and successful requests in one latency number`, `No saturation metrics until the pool is already exhausted`, `Different dashboard layouts for every service`],
-  interview:[`For any design, say which golden signals you’d alert on and which business metric shows user impact`],
-  tryit:{note:'Which golden signal is each metric?', mount:host => sortGame(host, [
-    {t:'p99 of /search response time', c:'lat', why:'Latency.'},
-    {t:'Orders placed per minute', c:'tra', why:'Traffic (business-level).'},
-    {t:'DB connection pool 95% in use', c:'sat', why:'Saturation.'},
-    {t:'5xx responses per second', c:'err', why:'Errors.'},
-    {t:'Kafka consumer lag', c:'sat', why:'Work queued = saturation.'},
-    {t:'Payments returning 200 but status=FAILED', c:'err', why:'An implicit error.'}
-  ], [{id:'lat', label:'Latency'}, {id:'tra', label:'Traffic'}, {id:'err', label:'Errors'}, {id:'sat', label:'Saturation'}])},
-  sources:[`Google SRE book, ch. 6`, `Wilkie, The RED Method`, `Gregg, The USE Method`]
+  mistakes:[`Mixing failed and successful requests in one latency number.`, `Having no saturation numbers until the pool is already full.`, `Using a different dashboard layout for every service.`],
+  interview:[`Say which golden signals you would alert on and which business number shows passenger impact.`],
+  tryit:[
+    {quiz:[{q:'A database connection pool is 95% in use. Which golden signal is this?', options:['Latency', 'Traffic', 'Errors', 'Saturation'], answer:3, why:'It shows how full a resource is.'}, {q:'Check-in returns 200 but the boarding pass is empty. What is this?', options:['A traffic spike', 'An implicit error', 'Normal latency', 'A saturation warning'], answer:1, why:'The status code looks fine, but passengers still get a wrong answer.'}]},
+    {note:'Which golden signal is each number?', mount:host => sortGame(host, [
+      {t:'p99 of the check-in response time', c:'lat', why:'Latency.'},
+      {t:'Check-ins per minute', c:'tra', why:'Traffic, as a business number.'},
+      {t:'Database connection pool 95% in use', c:'sat', why:'Saturation.'},
+      {t:'Server errors per second', c:'err', why:'Errors.'},
+      {t:'Requests waiting in a queue', c:'sat', why:'Waiting work is saturation.'},
+      {t:'Check-ins returning 200 with an empty boarding pass', c:'err', why:'An implicit error.'}
+    ], [{id:'lat', label:'Latency'}, {id:'tra', label:'Traffic'}, {id:'err', label:'Errors'}, {id:'sat', label:'Saturation'}])}
+  ],
+  sources:[`Google SRE book, chapter 6`, `Wilkie, The RED Method`, `Gregg, The USE Method`]
 },
 {
   id:'alerting-oncall', title:'Alerting, dashboards and on-call', minutes:11, tags:['alerting','on-call','burn rate','SLO','paging','alert fatigue'],
-  summary:'Page a human only for urgent, user-visible problems that need action now. Alert on symptoms and SLO burn rate rather than every cause, send everything else to tickets, and keep on-call humane.',
-  problem:`<p>The on-call engineer got 140 pages last week: CPU at 80%, a disk at 85%, one pod restarting, a 2-minute error blip at 3 AM. Most needed no action. When the real outage came, the page sat among 12 others and was acknowledged 25 minutes late. Too many alerts is as dangerous as too few.</p>`,
-  intuition:`A smoke alarm should ring when there is a fire, not every time you make toast. If it rings every morning, people take the battery out, and then it is silent during the real fire.`,
+  summary:'Page a person only for urgent problems that passengers can feel. Alert on symptoms and on how fast the error budget burns, and send everything else to tickets.',
+  problem:`<h3>A small example</h3><p>The on-call engineer got 140 pages last week.</p><ul><li>CPU at 80%, a disk at 85% and one restarting server</li><li>A 2-minute error blip at 3 AM</li><li>The real outage page arrived among 12 others and was seen 25 minutes late</li></ul><p>Which alerts deserve to wake a person?</p>`,
   how:{
-    steps:[`Every page must be <b>urgent, actionable and user-visible</b>; otherwise make it a ticket or a dashboard.`, `Alert on <b>symptoms</b> (users see errors or latency) via SLOs, not on every <b>cause</b> (CPU high). Causes go on dashboards for diagnosis.`, `Use <b>error-budget burn rate</b>: how fast you are consuming the budget. Fast burn → page; slow burn → ticket.`, `Use <b>multiple windows</b> (long for significance, short for quick reset) to avoid flapping and false pages.`, `Every alert links to a <b>runbook</b> and a dashboard; review alerts after each on-call week and delete noisy ones.`, `Sustainable rotations: enough people, follow-the-sun if possible, compensation, a manageable number of pages per shift, and handover notes.`],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow check-in errors from a quiet night to a real outage.</p>',
+    steps:[
+      {icon:'🎯', title:'Page only for urgent problems', text:'A page must be urgent, need action now and affect passengers. Everything else becomes a ticket or a dashboard.'},
+      {icon:'👀', title:'Alert on symptoms', text:'Alert when passengers see errors or slowness. High CPU goes on a dashboard to help find the cause.'},
+      {icon:'🔥', title:'Measure burn rate', text:'Burn rate is how fast the error budget is being used. A fast burn pages and a slow burn opens a ticket.'},
+      {icon:'🪟', title:'Use two time windows', text:'A long window shows the problem is real. A short window shows it is still happening.'},
+      {icon:'📘', title:'Link a runbook', text:'Each alert links to a runbook, which is a set of written steps for handling it. Review noisy alerts every week.'}
+    ],
     mount:host => burnRateSim(host),
-    deep:`<p><b>Burn-rate math:</b> with a 99.9% SLO the budget is 0.1% of requests over 30 days. A burn rate of 1 consumes exactly the budget in 30 days; 14.4 consumes 2% of the monthly budget in 1 hour; 6 consumes 5% in 6 hours. The SRE Workbook’s recommended starting point pages on 14.4× (1 h with a 5 min confirm window) and 6× (6 h with 30 min), and tickets on 1× (3 days with 6 h).</p><p><b>Low-traffic services:</b> burn-rate alerts are noisy when there are only a few requests an hour. Use synthetic probes to generate traffic, aggregate similar services, or alert on longer windows.</p><p><b>Alert quality metrics:</b> pages per shift, percentage actionable, time to acknowledge, and repeat alerts. Google’s SRE book suggests aiming for a small number of incidents per 12-hour shift so each gets proper attention.</p>`
+    html:`<h3>Everyday comparison</h3><p>Think of a smoke alarm.</p><div class="simple-table">${h.table(['Smoke alarm', 'Alerts'], [['Rings for a fire', 'Pages for an outage that passengers feel.'], ['Stays quiet for toast', 'Stays quiet for a short blip.'], ['Rings every morning, so people remove the battery', 'Too many alerts get ignored.']])}</div><div class="callout tip"><b>Important point</b><p>Too many alerts is as dangerous as too few.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Situation', 'Action'], [['The error budget burns fast', 'Page the on-call engineer.'], ['The error budget burns slowly', 'Open a ticket.'], ['CPU or disk is getting high', 'Show it on a dashboard.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Take a 99.9% SLO. The error budget is 0.1% of requests over 30 days. Burn rate 1 spends the whole budget in exactly 30 days, which is 720 hours. An error rate of 1.44% is 1.44 ÷ 0.1 = 14.4 times faster. The budget then lasts 720 ÷ 14.4 = 50 hours, so each hour uses 1 ÷ 50 = 2% of it.</p><p>Burn rate 6 lasts 720 ÷ 6 = 120 hours, so 6 hours use 5%.</p><h4>When it goes wrong</h4><p>Small traffic makes burn rates jumpy. Say only 10 check-ins arrive in a night hour. One failure is 1 ÷ 10 = 10% errors, which is burn rate 100. That pages a person for one unlucky request. Send fake check-ins on a schedule, called synthetic probes, or merge small services into one alert.</p><h4>How it works inside</h4><p>A common starting point pages at burn 14.4 over 1 hour with a 5-minute short window. It pages at 6 over 6 hours with a 30-minute short window. It opens a ticket at 1 over 3 days.</p>`
   },
-  tradeoffs:{use:[`SLO burn-rate pages for user-facing services`, `Cause-based alerts only when they predict imminent user impact (disk full in 4 h)`], avoid:[`Paging on CPU, memory or single-instance failures that redundancy already handles`, `Alerts without runbooks or owners`], alt:[`Tickets for slow burns and capacity trends`, `Synthetic monitoring for low-traffic paths`]},
+  tradeoffs:{use:[`Page on burn rate for check-in, because passengers feel the errors.`, `Use cause alerts, such as a disk full in 4 hours, only when they predict passenger impact.`], avoid:[`Do not page for CPU, memory or one failed server that redundancy already handles.`, `Do not create alerts without a runbook or an owner.`], alt:[`Open tickets for slow burns and capacity trends.`, `Use synthetic probes for paths with little traffic.`]},
   real:[
-    {co:'Google SRE Workbook', tier:'confirmed', text:'The “Alerting on SLOs” chapter walks through threshold, window and burn-rate approaches and recommends multi-window, multi-burn-rate alerts (14.4×/6× paging, 1× ticketing) as a starting point.', src:'Beyer et al., The Site Reliability Workbook (2018), ch. 5'},
-    {co:'Google SRE — on-call', tier:'confirmed', text:'The SRE book discusses balancing on-call load, limiting operational work to under 50% of SRE time, and keeping pages actionable.', src:'Site Reliability Engineering (2016), ch. 11 “Being On-Call”'},
-    {co:'Food-delivery dinner peak', tier:'educational', text:'Page on order-placement success burning budget fast during dinner; ticket on a slow rise in rider-assignment latency; dashboard (no alert) for per-node CPU.', src:'Simplified educational design'}
+    {co:'Google SRE Workbook', tier:'confirmed', text:'The chapter on alerting on SLOs compares threshold and burn-rate approaches. It recommends multiple windows and burn rates, with 14.4 and 6 for pages and 1 for tickets, as a starting point.', src:'Beyer et al., The Site Reliability Workbook (2018), chapter 5'},
+    {co:'Google SRE book', tier:'confirmed', text:'The SRE book discusses keeping on-call load fair, limiting operations work to under 50% of an engineer’s time and keeping pages actionable.', src:'Site Reliability Engineering (2016), chapter 11'}
   ],
-  mistakes:[`Alerting on every cause metric`, `Static thresholds that page at 3 AM for 2-minute blips`, `Pages without a runbook, an owner or a link to the dashboard`],
-  interview:[`Explain SLO-based alerting with burn rates and what pages vs what tickets`, `Mention runbooks and alert hygiene as part of the design`],
-  tryit:{note:'Compare the three policies in the table above. Then:', quiz:[{q:'With a 99.9% SLO, the current error rate is 1.44%. The burn rate is…', options:['1.44', '14.4', '144', '0.144'], answer:1, why:'1.44% ÷ 0.1% = 14.4.'}, {q:'A disk is at 85% and grows 1%/day. Best action?', options:['Page now', 'Create a ticket / capacity alert', 'Ignore', 'Reboot'], answer:1, why:'Not urgent; plan the fix.'}], quizId:'obs-l3'},
-  sources:[`Google SRE Workbook, ch. 5`, `Google SRE book, ch. 6 and 11`, `Rob Ewaschuk, “My Philosophy on Alerting” (Google)`]
+  mistakes:[`Alerting on every cause metric.`, `Using fixed thresholds that wake someone at 3 AM for a 2-minute blip.`, `Sending pages with no runbook, owner or dashboard link.`],
+  interview:[`Explain SLO alerting with burn rates and say what pages and what only opens a ticket.`, `Mention runbooks and alert reviews as part of the design.`],
+  tryit:{note:'Compare the three policies in the table above. Then check yourself.', quiz:[{q:'With a 99.9% SLO, the check-in error rate is 1.44%. What is the burn rate?', options:['144', '1.44', '0.144', '14.4'], answer:3, why:'1.44% ÷ 0.1% = 14.4.'}, {q:'A disk is at 85% and grows 1% a day. What is the best action?', options:['Page now', 'Reboot the server', 'Open a ticket or capacity alert', 'Ignore it'], answer:2, why:'It is not urgent. Plan the fix.'}], quizId:'obs-l3'},
+  sources:[`Google SRE Workbook, chapter 5`, `Google SRE book, chapters 6 and 11`, `Rob Ewaschuk, My Philosophy on Alerting`]
 },
 {
   id:'incident-postmortems', title:'Incident response and blameless postmortems', minutes:10, tags:['incident','incident commander','mitigation','postmortem','blameless'],
-  summary:'During an incident, organise (incident commander, roles, one channel), mitigate first and diagnose later, communicate regularly. Afterwards, write a blameless postmortem with concrete, tracked actions.',
-  problem:`<p>Payments are failing during a sale. Twelve engineers jump into the chat, three try different fixes at once, one restarts the database “to see if it helps”, nobody updates customer support, and an hour later nobody knows what was changed. Then the review becomes a hunt for who to blame, so next time people hide mistakes.</p>`,
-  intuition:`A hospital emergency room. One doctor leads (incident commander), others have clear jobs, the first goal is to stabilise the patient (mitigate), and the exact diagnosis comes after. Later a case review asks what in the <i>system</i> let it happen, not which nurse to punish.`,
+  summary:'In an incident, organise the team, restore service first and keep people informed. Afterwards, write a postmortem that looks at the system, not at who to blame.',
+  problem:`<h3>A small example</h3><p>Check-in fails at 5 AM, one hour before the first flights.</p><ul><li>Twelve engineers jump into the chat.</li><li>Three try different fixes at the same time.</li><li>Nobody tells the airport staff what is happening.</li></ul><p>How can the team fix it quickly and learn from it afterwards?</p>`,
   how:{
+    intro:'<h3>What happens behind the scenes</h3><p>Follow the 5 AM check-in incident from alert to postmortem.</p>',
+    steps:[
+      {icon:'🚨', title:'Detect and declare', text:'An alert or a passenger report starts the incident. Someone declares it and sets a severity level.'},
+      {icon:'🧑‍✈️', title:'Assign roles', text:'An incident commander coordinates. One person makes changes, one talks to others and one keeps the timeline.'},
+      {icon:'🩹', title:'Mitigate first', text:'Roll back the last release, switch a feature off or fail over. Restore check-in before hunting for the root cause.'},
+      {icon:'📢', title:'Update regularly', text:'Tell airport staff and leaders the impact and the time of the next update. Repeat every 30 minutes.'},
+      {icon:'📝', title:'Learn without blame', text:'Afterwards, write a postmortem with the timeline, causes and tracked actions. Ask what let it happen, not who to blame.'}
+    ],
     stepper:{title:'Lifecycle of an incident', items:[
-      {title:'Detect', tag:'alert', text:'An SLO alert, a customer report or a synthetic check fires. Acknowledge quickly.'},
-      {title:'Declare & assign roles', tag:'IC', text:'Declare an incident with a severity. An <b>Incident Commander</b> coordinates; an <b>ops lead</b> makes changes; a <b>comms lead</b> updates stakeholders; a <b>scribe</b> keeps the timeline.'},
-      {title:'Mitigate first', tag:'stop the bleeding', text:'Roll back the last deploy, flip a kill switch, fail over, shed load, scale up. Restore service before finding the root cause.'},
-      {title:'Communicate', tag:'cadence', text:'Regular updates (e.g. every 30 min) to status page, support and leadership: impact, actions, next update time.'},
-      {title:'Resolve & verify', tag:'monitor', text:'Confirm SLIs are back to normal, then close or downgrade the incident; keep watching for recurrence.'},
-      {title:'Blameless postmortem', tag:'learn', text:'Timeline, impact, contributing factors (technical and organisational), what went well, where we got lucky, and action items with owners and dates.'},
-      {title:'Follow through', tag:'actions', text:'Track action items to completion and share learnings widely. A postmortem with no completed actions is just a story.'}]},
-    deep:`<p><b>Why blameless:</b> people closest to the failure have the most information. If honesty is punished they stop sharing it and the same failure repeats. Ask “what made this action seem reasonable at the time?”, look for missing guardrails (why could one command delete production?), and fix those.</p><p><b>Severity levels</b> (e.g. SEV1 = widespread user impact) decide who is paged, communication cadence and whether a postmortem is mandatory. Define them in advance.</p><p><b>Useful metrics:</b> time to detect, time to mitigate, time to resolve, and recurrence. MTTR alone hides a lot; look at the distribution and the causes.</p>`
+      {title:'Detect', tag:'alert', text:'An SLO alert, a passenger report or a synthetic check fires. Acknowledge it quickly.'},
+      {title:'Declare and assign roles', tag:'IC', text:'Declare an incident with a severity. The incident commander coordinates. The ops lead makes changes. The comms lead updates others. The scribe keeps the timeline.'},
+      {title:'Mitigate first', tag:'stop the bleeding', text:'Roll back the last release, flip a kill switch, fail over, shed load or add capacity. Restore service before finding the root cause.'},
+      {title:'Communicate', tag:'cadence', text:'Send regular updates, for example every 30 minutes, to the status page, support and leaders. Give the impact, the actions and the next update time.'},
+      {title:'Resolve and verify', tag:'monitor', text:'Confirm that the key signals are back to normal. Then close the incident and keep watching for a repeat.'},
+      {title:'Blameless postmortem', tag:'learn', text:'Write the timeline, the impact, the contributing factors, what went well and where the team got lucky. Add action items with owners and dates.'},
+      {title:'Follow through', tag:'actions', text:'Track the actions to the end and share what you learned. A postmortem with no finished actions is only a story.'}]},
+    html:`<h3>Everyday comparison</h3><p>Think of a hospital emergency room.</p><div class="simple-table">${h.table(['Emergency room', 'Incident'], [['One doctor leads', 'One incident commander leads.'], ['Stabilise the patient first', 'Mitigate before finding the root cause.'], ['A case review asks what let it happen', 'A postmortem looks at the system, not the person.']])}</div><div class="callout tip"><b>Important point</b><p>Restore service first. Find the root cause after.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Moment', 'Action'], [['An alert fires', 'Acknowledge it and declare an incident.'], ['The cause is not known yet', 'Roll back or switch off the suspect change.'], ['Service is back', 'Verify it, then write the postmortem.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say check-in fails at 05:00 and the alert fires at 05:10. Detection took 10 minutes. A rollback finishes at 05:40, so mitigation took 30 more. Passengers were hurt for 40 minutes, and flights start at 06:00. Hunting the root cause first for 90 minutes would have run until 06:40.</p><p>Crowds slow people down. With 12 engineers in one chat, there are 12 × 11 ÷ 2 = 66 possible pairs talking. With a commander in the middle, there are only 11 lines.</p><h4>When it goes wrong</h4><p>Three people changing things at once is dangerous. If check-in recovers, nobody knows which change worked. If it gets worse, nobody knows which one hurt. Make one change at a time and write each one in the timeline with its time.</p><h4>How it works inside</h4><p>Build the timeline from timestamps in chat and graphs, not from memory. A good action item has an owner and a date, for example: add a guard so one command cannot delete production data.</p>`
   },
-  tradeoffs:{use:[`A lightweight, practised incident process for every team that runs production systems`], avoid:[`Heroic, uncoordinated debugging`, `Root-causing before mitigating`, `Blame-oriented reviews`], alt:[`Tabletop exercises and game days to practise the process`]},
+  tradeoffs:{use:[`Use a short, practised incident process for check-in and every other production system.`], avoid:[`Do not let twelve people debug at once without coordination.`, `Do not hunt for the root cause before restoring service.`, `Do not run reviews that look for someone to blame.`], alt:[`Practise with tabletop exercises and game days before a real incident.`]},
   real:[
-    {co:'Google SRE', tier:'confirmed', text:'The SRE book describes an incident-command structure (incident commander, operations, communications, planning) and a blameless postmortem culture with tracked action items.', src:'Site Reliability Engineering (2016), ch. 14 “Managing Incidents” and ch. 15 “Postmortem Culture”'},
-    {co:'Etsy', tier:'confirmed', text:'John Allspaw’s writing on blameless postmortems and a “just culture” at Etsy argued that blame leads people to hide information, while blamelessness enables learning.', src:'John Allspaw, “Blameless PostMortems and a Just Culture”, Code as Craft (2012)'},
-    {co:'Public postmortems', tier:'confirmed', text:'Companies such as Cloudflare, GitHub, GitLab and AWS publish detailed post-incident reports describing timelines, contributing factors and remediation.', src:'Cloudflare, GitHub, GitLab and AWS public incident reports'}
+    {co:'Google SRE', tier:'confirmed', text:'The SRE book describes an incident command structure and a blameless postmortem culture with tracked action items.', src:'Site Reliability Engineering (2016), chapters 14 and 15'},
+    {co:'Etsy', tier:'confirmed', text:'John Allspaw argued that blame makes people hide information, and that blameless reviews help teams learn.', src:'Allspaw, Blameless PostMortems and a Just Culture (2012)'}
   ],
-  mistakes:[`Several people making changes at once without coordination`, `No timeline kept, so the postmortem is reconstructed from memory`, `Action items with no owner or due date`],
-  interview:[`When asked about failures, describe detection, mitigation (rollback/failover/kill switch), communication and the postmortem`],
-  tryit:{note:'Put the incident steps in order:', mount:host => orderGame(host, ['Alert fires and on-call acknowledges', 'Declare an incident and assign an incident commander', 'Mitigate: roll back the suspicious deploy', 'Post a status update with impact and next update time', 'Verify SLIs are back to normal and resolve', 'Write a blameless postmortem with owned action items'])},
-  sources:[`Google SRE book, ch. 14–15`, `Allspaw, Blameless PostMortems (2012)`, `PagerDuty Incident Response documentation`]
+  mistakes:[`Several people making changes with no coordination.`, `Keeping no timeline, so the postmortem is rebuilt from memory.`, `Writing action items with no owner or due date.`],
+  interview:[`When asked about failures, describe detection, mitigation, communication and the postmortem.`],
+  tryit:[
+    {quiz:[{q:'What should happen first in an incident?', options:['Find the root cause', 'Write the postmortem', 'Reduce the impact on passengers', 'Decide who is to blame'], answer:2, why:'Restore service first. Diagnose after.'}, {q:'What makes a postmortem blameless?', options:['It names nobody', 'It asks what in the system let the mistake happen', 'It skips action items', 'Only managers read it'], answer:1, why:'The goal is to fix the system, so people keep sharing the truth.'}]},
+    {note:'Put the incident steps in order:', mount:host => orderGame(host, ['Alert fires and on-call acknowledges', 'Declare an incident and assign an incident commander', 'Mitigate: roll back the suspicious release', 'Post a status update with the impact and the next update time', 'Check that check-in is healthy again and resolve', 'Write a blameless postmortem with owned actions'], '✓ All six steps in order. Restore service first, then learn from it.')}
+  ],
+  sources:[`Google SRE book, chapters 14 and 15`, `Allspaw, Blameless PostMortems (2012)`, `PagerDuty Incident Response documentation`]
 },
 {
   id:'ci-cd', title:'CI/CD pipelines', minutes:10, tags:['CI','CD','pipeline','DORA','trunk-based','artifact'],
-  summary:'Continuous integration merges and tests small changes constantly; continuous delivery keeps every build releasable and deploys it automatically through stages with checks. Small, frequent changes are safer than big, rare ones.',
-  problem:`<p>The team releases once a month: 300 changes merged in the last week, a two-day manual QA cycle, and a Friday-night deployment run from a wiki page. When something breaks, which of the 300 changes caused it? Rolling back undoes everything. Big batches make every release scary, so releases get even rarer.</p>`,
-  intuition:`Washing dishes after every meal versus once a month. Small, frequent batches are easy and nothing piles up. A month’s pile is a miserable all-day job, and you can’t tell which dish made the sink smell.`,
+  summary:'Continuous integration tests small changes all the time. Continuous delivery keeps every build ready to release and moves it through stages automatically. Small, frequent changes are safer than big, rare ones.',
+  problem:`<h3>A small example</h3><p>The check-in team ships once a month.</p><ul><li>300 changes merge in the last week.</li><li>A manual test cycle takes two days.</li><li>The release runs from a wiki page on Friday night.</li></ul><p>When something breaks, which of the 300 changes caused it?</p>`,
   how:{
-    steps:[`<b>CI</b>: every change goes through a pull request into a short-lived branch or trunk; automated build, unit tests, static analysis and security scans run in minutes.`, `Build <b>one immutable artifact</b> (container image) per commit and store it in a registry; promote the same artifact through environments.`, `<b>CD</b>: automatically deploy to staging, run integration/end-to-end tests, then to production in stages (one box → one AZ → one region → everywhere) with <b>bake time</b> and automated health checks.`, `<b>Automated rollback</b> when metrics regress; feature flags to decouple deploy from release.`, `Measure with <b>DORA metrics</b>: deployment frequency, lead time for changes, change failure rate, time to restore.`],
-    diagram:{title:'A delivery pipeline', w:820, h:230, alt:'A commit triggers CI build and tests, an image is pushed to a registry, deployed to staging, then progressively to production with automated checks.',
-      nodes:[{id:'dev', type:'client', label:'Commit / PR', x:70, y:115}, {id:'ci', type:'service', label:'CI', sub:'build · test · scan', x:220, y:115, w:130}, {id:'reg', type:'db', label:'Image registry', sub:'web@sha256:…', x:390, y:115, w:140}, {id:'stg', type:'service', label:'Staging', sub:'e2e tests', x:560, y:50, w:120}, {id:'prod', type:'lb', label:'Production', sub:'1 box → AZ → region', x:720, y:115, w:150}, {id:'mon', type:'ext', label:'Metrics / SLOs', x:560, y:190, w:140}],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow one small boarding pass fix from commit to passengers.</p>',
+    steps:[
+      {icon:'🔀', title:'Merge small changes', text:'Each change goes through a pull request. A build, tests and scans run in minutes.'},
+      {icon:'📦', title:'Build once', text:'The build makes one image per commit and stores it in a registry. The same image moves through every stage.'},
+      {icon:'🧪', title:'Test in staging', text:'The image deploys to a copy of the system called staging. End-to-end tests try a whole check-in.'},
+      {icon:'🌊', title:'Release in waves', text:'Production gets the image in waves, such as one server, then one zone, then everywhere. A wait between waves, called bake time, lets the metrics show a problem.'},
+      {icon:'↩️', title:'Roll back automatically', text:'If errors rise, the pipeline stops and goes back. A small change makes the cause easy to find.'}
+    ],
+    diagram:{title:'A delivery pipeline', w:820, h:230, alt:'A commit triggers a build and tests. The image goes to a registry, then to staging, then in waves to production with automatic checks.',
+      nodes:[{id:'dev', type:'client', label:'Commit or PR', x:70, y:115}, {id:'ci', type:'service', label:'CI', sub:'build, test, scan', x:220, y:115, w:130}, {id:'reg', type:'db', label:'Image registry', sub:'checkin@sha256:abc', x:390, y:115, w:140}, {id:'stg', type:'service', label:'Staging', sub:'end-to-end tests', x:560, y:50, w:130}, {id:'prod', type:'lb', label:'Production', sub:'server, zone, region', x:720, y:115, w:150}, {id:'mon', type:'ext', label:'Metrics and SLOs', x:560, y:190, w:150}],
       edges:[{from:'dev', to:'ci'}, {from:'ci', to:'reg'}, {from:'reg', to:'stg'}, {from:'stg', to:'prod'}, {from:'prod', to:'mon'}, {from:'mon', to:'prod', dashed:true}],
       steps:[
-        {note:'A developer pushes a small change. CI builds and runs tests and scans in minutes.', flow:[['dev', 'ci', 'push']]},
-        {note:'One immutable image, tagged with the commit SHA, goes to the registry.', flow:[['ci', 'reg', 'image']]},
-        {note:'The same image deploys to staging; end-to-end tests pass.', flow:[['reg', 'stg', 'deploy']]},
-        {note:'Production rollout in waves with bake time. Metrics are compared against baselines at each step; a regression triggers automatic rollback.', flow:[['stg', 'prod', 'wave 1'], ['prod', 'mon', 'SLIs'], ['mon', 'prod', 'OK → next wave']]}
+        {note:'A developer pushes a small change. The build runs tests and scans in minutes.', flow:[['dev', 'ci', 'push']]},
+        {note:'One image, tagged with the commit ID, goes to the registry.', flow:[['ci', 'reg', 'image']]},
+        {note:'The same image deploys to staging, and the end-to-end tests pass.', flow:[['reg', 'stg', 'deploy']]},
+        {note:'Production gets the image in waves with a wait after each. Metrics are checked at every step, and a problem triggers an automatic rollback.', flow:[['stg', 'prod', 'wave 1'], ['prod', 'mon', 'SLIs'], ['mon', 'prod', 'OK, next wave']]}
       ]},
-    deep:`<p><b>DORA research</b> (Accelerate, State of DevOps reports) found that elite performers deploy on demand with short lead times <i>and</i> have lower change-failure rates and faster recovery. Speed and stability go together when batches are small and automation is strong.</p><p><b>Pipeline hygiene:</b> keep CI fast (parallelise, cache, split slow suites), make flaky tests a top-priority bug, run DB migrations as separate backward-compatible steps, sign artifacts and keep provenance (SLSA), and protect the pipeline itself: it can deploy to production, so it is a high-value target.</p><p><b>Trunk-based development</b> (short-lived branches, feature flags for incomplete work) avoids long-lived branch merge pain and pairs naturally with CD.</p>`
+    html:`<h3>Everyday comparison</h3><p>Think of washing dishes.</p><div class="simple-table">${h.table(['Washing dishes', 'Releasing code'], [['After every meal', 'After every small change'], ['A month’s pile is a miserable job', 'A month of changes is a risky release'], ['A small pile shows which dish smells', 'A small change shows which change broke it']])}</div><div class="callout tip"><b>Important point</b><p>Small, frequent changes are safer than big, rare ones.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Practice', 'What happens'], [['Continuous integration (CI)', 'Merge often, and build and test every change.'], ['Continuous delivery (CD)', 'Every build can be released and moves through stages.'], ['Continuous deployment', 'The last step to production is automatic too.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say 300 changes ship together and the release breaks. A halving search tests half the changes, then half of the bad half, and so on. It finds the bad one in about 9 steps, because 2 to the power 9 is 512, the first power of 2 above 300. Each step needs a full test run. With 10 changes, 4 steps are enough.</p><p>Say tests take 60 minutes in one line. Split evenly across 6 machines, they take 60 ÷ 6 = 10 minutes.</p><h4>When it goes wrong</h4><p>Flaky tests add up. Say each of 100 tests fails by chance 1% of the time. All 100 pass with probability 0.99 to the power 100, which is about 37%. So about 63% of runs fail with no real bug. People start pressing rerun, and real failures get ignored.</p><h4>How it works inside</h4><p>Build once and promote the same image. Its digest, a hash of its contents, names exactly what runs in each stage. A tag such as latest can point to different images over time, so deploy by digest.</p>`
   },
-  tradeoffs:{use:[`Any team shipping software frequently`, `Small batches with automated tests and staged rollouts`], avoid:[`Manual deploy steps from wiki pages`, `Rebuilding artifacts per environment`, `Long release trains that batch hundreds of changes`], alt:[`Scheduled releases for app-store mobile apps (still with CI and staged rollouts)`, `GitOps (desired state in git, reconciled by an agent like Argo CD)`]},
+  tradeoffs:{use:[`Use small changes, automated tests and staged releases for the check-in app.`, `Use GitOps, where git holds the wanted state and an agent applies it, if the team runs Kubernetes.`], avoid:[`Do not deploy from a wiki page by hand.`, `Do not rebuild the image for each environment.`, `Do not batch hundreds of changes into one release.`], alt:[`Mobile apps in app stores release on a schedule, but still use CI and staged rollouts.`]},
   real:[
-    {co:'DORA / Accelerate', tier:'confirmed', text:'Research by Forsgren, Humble and Kim identified four key delivery metrics (deployment frequency, lead time, change failure rate, time to restore) and showed high performers excel at both speed and stability.', src:'Forsgren, Humble & Kim, Accelerate (2018); DORA State of DevOps reports'},
-    {co:'Amazon', tier:'confirmed', text:'Amazon describes pipelines that deploy to production automatically in waves, from one box to one AZ to one region, with bake times, automated monitors and automatic rollback.', src:'Clare Liguori, “Automating safe, hands-off deployments”, Amazon Builders’ Library'},
-    {co:'Typical startup pipeline', tier:'educational', text:'GitHub Actions builds and tests each PR, pushes an image to a registry, Argo CD syncs staging, and a canary to production promotes automatically if error rate and latency hold.', src:'Simplified educational design'}
+    {co:'DORA', tier:'confirmed', text:'Forsgren, Humble and Kim named four delivery metrics and showed that high performers are both faster and more stable.', src:'Forsgren, Humble and Kim, Accelerate (2018)'},
+    {co:'Amazon', tier:'confirmed', text:'Amazon describes pipelines that deploy in waves, with wait times, automatic monitors and automatic rollback.', src:'Clare Liguori, Automating safe, hands-off deployments, Amazon Builders’ Library'}
   ],
-  mistakes:[`Slow, flaky CI that people learn to ignore`, `Migrations bundled into app deploys that can’t be rolled back`, `Manual “click-ops” production steps`],
-  interview:[`Describe build once → staged automatic rollout → automated rollback; mention DORA metrics`],
-  tryit:{note:'CI or CD?', mount:host => sortGame(host, [
-    {t:'Run unit tests on every pull request', c:'ci', why:'Integration checks on each change.'},
-    {t:'Deploy to one production box, bake 30 minutes, then one AZ', c:'cd', why:'Progressive delivery.'},
-    {t:'Static analysis and dependency vulnerability scan', c:'ci', why:'Checks during integration.'},
-    {t:'Automatic rollback when error rate rises after deploy', c:'cd', why:'A delivery safeguard.'},
-    {t:'Build a container image tagged with the commit SHA', c:'ci', why:'Produces the artifact.'},
-    {t:'Promote the same image from staging to production', c:'cd', why:'Delivery of the same artifact.'}
-  ], [{id:'ci', label:'Continuous integration'}, {id:'cd', label:'Continuous delivery/deployment'}])},
-  sources:[`Forsgren, Humble & Kim, Accelerate (2018)`, `Humble & Farley, Continuous Delivery (2010)`, `Amazon Builders’ Library — safe deployments`]
+  mistakes:[`Running slow, flaky tests that people learn to ignore.`, `Bundling database changes into app releases that cannot be undone.`, `Clicking through manual production steps.`],
+  interview:[`Describe build once, staged automatic rollout and automatic rollback.`, `Mention the four DORA metrics.`],
+  tryit:[
+    {quiz:[{q:'Why promote the same image through every stage?', options:['It is smaller', 'What you tested is exactly what you ship', 'It avoids testing', 'It needs no registry'], answer:1, why:'A rebuilt image could differ from the one you tested.'}, {q:'What does a wait between waves do?', options:['Speeds up the release', 'Deletes old images', 'Runs unit tests', 'Gives metrics time to show a problem before the next wave'], answer:3, why:'Some problems appear only after a few minutes of real traffic.'}]},
+    {note:'CI or CD?', mount:host => sortGame(host, [
+      {t:'Run unit tests on every pull request', c:'ci', why:'It checks each change as it merges.'},
+      {t:'Deploy to one server, wait 30 minutes, then one zone', c:'cd', why:'It is a staged release.'},
+      {t:'Scan code and libraries for known flaws', c:'ci', why:'It is a check during integration.'},
+      {t:'Roll back automatically when errors rise after a release', c:'cd', why:'It is a delivery safeguard.'},
+      {t:'Build an image tagged with the commit ID', c:'ci', why:'It produces the image.'},
+      {t:'Promote the same image from staging to production', c:'cd', why:'It delivers the tested image.'}
+    ], [{id:'ci', label:'Continuous integration'}, {id:'cd', label:'Continuous delivery'}])}
+  ],
+  sources:[`Forsgren, Humble and Kim, Accelerate (2018)`, `Humble and Farley, Continuous Delivery (2010)`, `Amazon Builders’ Library, safe deployments`]
 },
 {
   id:'deploy-strategies', title:'Rolling, blue-green and canary deployments', minutes:11, tags:['rolling','blue-green','canary','rollback','progressive delivery'],
-  summary:'Rolling updates replace instances gradually; blue-green switches all traffic between two full environments; canaries expose a small slice first and compare metrics. They trade blast radius, rollback speed and extra capacity.',
-  problem:`<p>A new release of the UPI-payments service has a bug that fails 20% of payments, which tests didn’t catch. How many users are hurt before anyone notices, and how fast can you undo it? That depends almost entirely on <i>how</i> you deployed.</p>`,
-  intuition:`Introducing a new recipe in a restaurant chain. Change kitchens one by one (rolling). Build a second kitchen, switch all orders to it and keep the old one ready (blue-green). Or serve the new dish to a few tables first and watch their faces (canary).`,
+  summary:'Rolling updates replace servers a few at a time. Blue-green switches all traffic between two full copies. A canary sends a small share to the new version first. They differ in damage, rollback speed and extra cost.',
+  problem:`<h3>A small example</h3><p>A new seat map release has a bug. It fails 20% of seat choices, and the tests did not catch it.</p><ul><li>1,000 requests arrive every second.</li><li>The bug is only found after the release.</li><li>The damage depends on how the release was rolled out.</li></ul><p>How many passengers are hurt before anyone notices, and how fast can you undo it?</p>`,
   how:{
-    steps:[`<b>Rolling</b>: replace instances in batches (maxSurge/maxUnavailable). Little extra capacity, but old and new run together and rollback is another rolling update.`, `<b>Blue-green</b>: deploy to an idle identical environment, test it, switch the router; rollback is switching back. Needs 2× capacity during the switch, and switches 100% of users at once.`, `<b>Canary</b>: send a small percentage (1–5%) to the new version, compare its metrics with the baseline automatically, then increase in steps. Smallest blast radius, slower full rollout.`, `All three need <b>backward-compatible</b> data and API changes, because two versions run at the same time (even blue-green during the switch).`, `Automate the decision: health checks, SLO metrics, statistical canary analysis, automatic rollback.`],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow the buggy seat map release through three ways of rolling out.</p>',
+    steps:[
+      {icon:'🔄', title:'Rolling', text:'Replace servers a few at a time. It needs little extra capacity, but old and new versions run together for a while.'},
+      {icon:'🔁', title:'Blue-green', text:'Build a full second copy and test it. Then switch all traffic at once, and switch back to roll back.'},
+      {icon:'🐤', title:'Canary', text:'Send a small share, such as 5%, to the new version. Compare its metrics with a matching baseline.'},
+      {icon:'📊', title:'Let automation judge', text:'Automated analysis compares errors and speed. It promotes the release or rolls it back.'},
+      {icon:'🧮', title:'Count the damage', text:'Damage is the traffic share times the error rate times the minutes before detection. A small first share keeps it small.'}
+    ],
     mount:host => deploySim(host),
-    deep:`<p><b>Canary analysis:</b> compare the canary cohort with a baseline cohort of the same size started at the same time (not with the old fleet, which has warm caches and different uptime). Netflix’s Kayenta runs statistical tests on many metrics and scores the canary.</p><p><b>Shadow / dark launches:</b> send a copy of real traffic to the new version without returning its responses, which catches crashes and performance regressions with zero user impact (beware side-effects such as writes and emails).</p><p><b>Mobile clients:</b> you can’t roll back an installed app, so use staged rollouts in app stores, server-driven feature flags and API versioning.</p>`
+    html:`<h3>Everyday comparison</h3><p>Think of an airport trying a new boarding procedure.</p><div class="simple-table">${h.table(['Airport', 'Release'], [['Try it at one gate at a time', 'Rolling update.'], ['Open a second, identical terminal and move everyone over', 'Blue-green.'], ['Try it on a few flights and watch', 'Canary.']])}</div><div class="callout tip"><b>Important point</b><p>How you release decides how many passengers a bug can hurt.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Situation', 'Choice'], [['High traffic and high risk', 'Canary with automatic analysis'], ['You need an instant whole-environment rollback', 'Blue-green'], ['A simple, stateless service', 'Rolling update']])}</div>`,
+    deep:`<h4>The numbers</h4><p>The bug fails 20% of seat choices and 1,000 requests arrive each second. Say it takes 2 minutes, or 120 seconds, to notice.</p><ul><li>Canary at 5%: 1,000 × 0.05 × 0.2 = 10 failures each second. Then 10 × 120 = 1,200 failures.</li><li>Blue-green at 100%: 1,000 × 1 × 0.2 = 200 failures each second. Then 200 × 120 = 24,000 failures.</li></ul><p>If a person notices after 15 minutes (900 seconds), the canary fails 9,000 requests and blue-green fails 180,000.</p><h4>When it goes wrong</h4><p>A canary needs enough traffic to judge. At 5% it sees 50 requests each second, or 3,000 a minute. Say normal errors are 0.1%, about 3 a minute. A bug that fails 0.2% adds up to 6. Telling 6 from 3 is hard, so wait longer or raise the share.</p><h4>How it works inside</h4><p>Compare the canary with a baseline, a few old-version servers started at the same time. The main fleet has warm caches and a different age, so it is an unfair comparison.</p>`
   },
-  tradeoffs:{use:[`Canary for high-traffic, high-risk services with good metrics`, `Blue-green when you need instant, whole-environment rollback and can afford 2× briefly`, `Rolling as a simple default for stateless services`], avoid:[`Blue-green for a bad release without pre-switch testing (100% blast radius)`, `Canaries on tiny traffic where metrics are statistically meaningless`], alt:[`Feature flags (release without deploying)`, `Shadow traffic`, `Cell-by-cell deployment`]},
+  tradeoffs:{use:[`Use a canary for the seat map, because traffic is high and a bug is costly.`, `Use blue-green when you need an instant rollback and can afford double capacity for a short time.`, `Use a rolling update as the simple default for a stateless service.`], avoid:[`Do not use blue-green without testing the new copy first. A bug then hits 100% of passengers.`, `Do not use a canary on tiny traffic where the numbers prove nothing.`], alt:[`Use feature flags to release without deploying.`, `Send shadow traffic to the new version first.`]},
   real:[
-    {co:'Netflix — Spinnaker & Kayenta', tier:'confirmed', text:'Netflix and Google released Kayenta (2018) for automated canary analysis within Spinnaker, scoring canary metrics against a baseline before promotion.', src:'Netflix Tech Blog / Google Cloud blog, “Automated Canary Analysis at Netflix with Kayenta” (2018)'},
-    {co:'Kubernetes', tier:'confirmed', text:'Deployments use rolling updates by default, controlled by maxSurge and maxUnavailable; tools such as Argo Rollouts and Flagger add canary and blue-green strategies with metric analysis.', src:'Kubernetes documentation; Argo Rollouts and Flagger documentation'},
-    {co:'Payment service release', tier:'educational', text:'Canary 1% of UPI transactions per bank for 15 minutes, compare success rates per bank against baseline, then 10% → 50% → 100% with automatic rollback.', src:'Simplified educational design'}
+    {co:'Netflix and Google', tier:'confirmed', text:'They released Kayenta in 2018 for automated canary analysis in Spinnaker. It scores canary metrics against a baseline before promotion.', src:'Netflix Tech Blog, Automated Canary Analysis at Netflix with Kayenta (2018)'},
+    {co:'Kubernetes', tier:'confirmed', text:'A Kubernetes Deployment uses rolling updates by default. Tools such as Argo Rollouts and Flagger add canary and blue-green releases.', src:'Kubernetes, Argo Rollouts and Flagger documentation'}
   ],
-  mistakes:[`Comparing canary metrics with the whole old fleet rather than a matched baseline`, `Incompatible DB changes that break the old version during rollout`, `Manual “looks fine to me” promotion`],
-  interview:[`Pick a strategy and justify it by blast radius, rollback time and capacity; mention automated analysis and backward compatibility`],
-  tryit:{note:'Switch strategies above with the bug on, then turn off automated analysis and compare the failed-request counts.', quiz:[{q:'A bad release fails 20% of requests. Which strategy limits the damage most if detection takes 2 minutes?', options:['Blue-green', 'Rolling', 'Canary at 5%', 'Big-bang redeploy'], answer:2, why:'Only 5% of traffic is exposed while it is detected.'}], quizId:'obs-l6'},
-  sources:[`Kayenta / Spinnaker documentation`, `Kubernetes Deployment documentation`, `Fowler, BlueGreenDeployment (2010)`, `Sato, CanaryRelease (2014)`]
+  mistakes:[`Comparing canary metrics with the whole old fleet instead of a matching baseline.`, `Making database changes that break the old version during the rollout.`, `Promoting by hand because it “looks fine”.`],
+  interview:[`Pick a strategy and justify it by damage, rollback time and capacity.`, `Mention automated analysis and backward-compatible changes.`],
+  tryit:{note:'Switch strategies above with the bug on. Then turn off automated analysis and compare the failed-request counts.', quiz:[{q:'A bad release fails 20% of requests, and detection takes 2 minutes. Which strategy limits the damage most?', options:['Blue-green', 'Rolling', 'Redeploy everything at once', 'Canary at 5%'], answer:3, why:'Only 5% of traffic is exposed while the bug is detected.'}, {q:'Why compare a canary with a matching baseline and not with the whole old fleet?', options:['The baseline started at the same time, so warm caches and age do not skew the result', 'It is cheaper', 'The old fleet is switched off', 'It avoids using metrics'], answer:0, why:'A fair comparison needs two groups in the same conditions.'}], quizId:'obs-l6'},
+  sources:[`Kayenta and Spinnaker documentation`, `Kubernetes Deployment documentation`, `Fowler, BlueGreenDeployment (2010)`, `Sato, CanaryRelease (2014)`]
 },
 {
   id:'infrastructure-as-code', title:'Infrastructure as code', minutes:9, tags:['IaC','Terraform','CloudFormation','drift','GitOps','state'],
-  summary:'Describe infrastructure in versioned code, review it like code, and let a tool compute and apply the difference between desired and actual state. This gives reproducible environments, fast recovery and an audit trail.',
-  problem:`<p>Production was built by hand over three years through the cloud console. Nobody knows exactly which security-group rules exist or why. Creating a second region for DR would take weeks of guesswork, and last month someone changed a load-balancer setting by hand that broke health checks, with no record of who or when.</p>`,
-  intuition:`An architect’s blueprint versus building by memory. With a blueprint you can build the same house again in another city, review changes before the walls go up, and notice when someone has knocked out a wall that should be there.`,
+  summary:'Infrastructure as code describes servers, networks and databases in files that are versioned and reviewed. A tool compares the files with reality and applies the difference.',
+  problem:`<h3>A small example</h3><p>The check-in servers were built by hand in the cloud console over three years.</p><ul><li>Nobody knows which firewall rules exist or why.</li><li>A second region for emergencies would take weeks of guesswork.</li><li>Last month, someone changed a setting by hand and check-in broke.</li></ul><p>How can the team rebuild and review the setup safely?</p>`,
   how:{
-    steps:[`Write <b>declarative</b> definitions (Terraform/OpenTofu, CloudFormation, Pulumi, Crossplane) of networks, instances, databases, IAM and DNS.`, `<b>Plan</b>: the tool compares code with recorded state and the real cloud, and shows what it will add, change and destroy.`, `<b>Review</b> the plan in a pull request; policy checks (no public buckets, required tags) run automatically.`, `<b>Apply</b> from CI with locked, remote state, not from laptops.`, `<b>Detect drift</b> regularly; fix by changing code, not by more console clicks. Use modules for repeatable patterns (a “standard service”).`],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow one change to the check-in servers, from a file edit to the cloud.</p>',
+    steps:[
+      {icon:'📄', title:'Describe it in code', text:'Write files that say what should exist, such as 3 servers and a database. This is called infrastructure as code, or IaC.'},
+      {icon:'🔍', title:'Run a plan', text:'The tool compares the files with what really exists. It lists what it will add, change and destroy.'},
+      {icon:'👀', title:'Review the plan', text:'A teammate reviews the plan in a pull request. Automatic checks block unsafe settings, such as a public storage bucket.'},
+      {icon:'✅', title:'Apply from the pipeline', text:'The pipeline applies the plan using a locked, shared record of state. Nobody applies from a laptop.'},
+      {icon:'🧭', title:'Catch drift', text:'Drift means the real setup no longer matches the code. Check often and fix it by changing the code.'}
+    ],
     mount:host => iacDemo(host),
-    html:h.code('hcl', `resource "aws_instance" "web" {
+    html:`<h3>Everyday comparison</h3><p>Think of an architect’s blueprint.</p><div class="simple-table">${h.table(['Blueprint', 'Infrastructure as code'], [['Build the same house in another city', 'Create a second region from the same code.'], ['Review changes before the walls go up', 'Review the plan before applying.'], ['Notice a wall someone knocked out', 'Detect drift.']])}</div><div class="callout tip"><b>Important point</b><p>The code is the source of truth. Console clicks create drift.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Situation', 'Action'], [['You need a new region', 'Apply the same code with new settings.'], ['Someone changed a setting in the console', 'Run a plan, then fix the code or undo the change.'], ['A plan says destroy', 'Stop and review before applying.']])}</div>`,
+    deep:`<h4>How it works inside</h4><p>A plan prints a short count, for example <code>Plan: 3 to add, 0 to change, 0 to destroy.</code> A reviewer reads this first. A line such as <code>1 to destroy</code> next to a database deserves a full stop and a question.</p><p>The state file maps each resource name in the code to a real cloud ID. Rename a resource in the code and the tool may see the old name as gone and the new name as missing. The plan then shows 1 to destroy and 1 to add. A moved block in Terraform keeps the real resource.</p><h4>The numbers</h4><p>Say the plan runs every hour. A hand change made at 14:10 shows as drift at the 15:00 run, 50 minutes later. A daily plan could leave it for up to 24 hours.</p><h4>When it goes wrong</h4><p>Two applies at once can corrupt the state, so a remote lock makes the second one wait. State can hold secrets such as database passwords, so encrypt it and limit who can read it. Keep stacks small, such as network, data and services, so one bad plan cannot touch everything.</p><h4>In code</h4><p>This sample creates 3 check-in servers and turns on versioning for a storage bucket.</p>` + h.code('hcl', `resource "aws_instance" "web" {
   count         = 3
   ami           = data.aws_ami.app.id
   instance_type = "m6i.large"
-  subnet_id     = element(module.vpc.private_subnets, count.index)  # spread across AZs
-  tags = { service = "web", owner = "team-checkout", env = "prod" }
+  subnet_id     = element(module.vpc.private_subnets, count.index)  # spread across zones
+  tags = { service = "checkin", owner = "team-checkin", env = "prod" }
 }
 
 resource "aws_s3_bucket_versioning" "assets" {
   bucket = aws_s3_bucket.assets.id
   versioning_configuration { status = "Enabled" }
-}`, 'main.tf'),
-    deep:`<p><b>State</b> maps code resources to real IDs. Store it remotely with locking (e.g. object storage + a lock table) so two applies can’t race, and protect it, because it can contain sensitive values.</p><p><b>Blast radius:</b> split infrastructure into small stacks (network, data, per-service) so one plan can’t accidentally destroy everything; require extra approval for destructive changes; use <code>prevent_destroy</code> on databases.</p><p><b>GitOps</b> applies the same idea continuously: an agent (Argo CD, Flux) watches a git repo and reconciles the cluster to it, reverting drift automatically.</p>`
+}`, 'main.tf') + `<p>Ask for extra approval on destroy steps, and use <code>prevent_destroy</code> on databases. GitOps applies the same idea all the time. An agent inside the cluster keeps the real system equal to the files in git.</p>`
   },
-  tradeoffs:{use:[`All production infrastructure, especially anything you may need to rebuild (DR, new regions)`], avoid:[`Manual console changes in production`, `One giant state file for everything`], alt:[`Managed PaaS where the platform owns most infrastructure`, `Imperative scripts (harder to diff and review)`]},
+  tradeoffs:{use:[`Use IaC for all production check-in infrastructure, especially anything you may need to rebuild.`, `Use it to create the emergency region from the same code.`], avoid:[`Do not change production by hand in the console.`, `Do not keep everything in one giant state file.`], alt:[`Use a managed platform that owns most of the infrastructure.`, `Imperative scripts are harder to compare and review.`]},
   real:[
-    {co:'Terraform / OpenTofu', tier:'confirmed', text:'HashiCorp’s Terraform (2014) popularised declarative, multi-cloud infrastructure with plan/apply and state; OpenTofu is a Linux Foundation fork created after Terraform’s 2023 licence change.', src:'Terraform and OpenTofu documentation'},
-    {co:'AWS CloudFormation', tier:'confirmed', text:'CloudFormation provisions AWS resources from templates as stacks, with change sets to preview changes and drift detection to find manual modifications.', src:'AWS CloudFormation documentation'},
-    {co:'DR region from code', tier:'educational', text:'With networking, databases and services defined as modules, standing up a recovery region is applying the same code with different variables, measured in hours rather than weeks.', src:'Simplified educational design'}
+    {co:'Terraform and OpenTofu', tier:'confirmed', text:'HashiCorp’s Terraform made plan, apply and state popular. OpenTofu is a Linux Foundation fork created after Terraform’s 2023 licence change.', src:'Terraform and OpenTofu documentation'},
+    {co:'AWS CloudFormation', tier:'confirmed', text:'CloudFormation creates AWS resources from templates. It has change sets to preview changes and drift detection to find manual edits.', src:'AWS CloudFormation documentation'}
   ],
-  mistakes:[`Applying from laptops with local state`, `Secrets hard-coded in IaC files`, `Ignoring plan output that says “destroy”`],
-  interview:[`Mention IaC for reproducibility and DR; plan in PRs, apply from CI, detect drift`],
-  tryit:{note:'Change the code above, run apply, then simulate a console edit and read the drift plan. Then:', quiz:[{q:'What does “drift” mean in IaC?', options:['Clock skew', 'Real infrastructure no longer matching the code/state', 'A slow apply', 'Version upgrade'], answer:1, why:'Usually caused by manual changes.'}], quizId:'obs-l7'},
-  sources:[`Terraform/OpenTofu docs`, `AWS CloudFormation docs`, `Morris, Infrastructure as Code (2nd ed., 2020)`]
+  mistakes:[`Applying from laptops with local state.`, `Writing secrets directly into IaC files.`, `Ignoring plan output that says destroy.`],
+  interview:[`Mention IaC for repeatable setups and emergency regions.`, `Say that plans are reviewed in pull requests, applied from a pipeline and checked for drift.`],
+  tryit:{note:'Change the code above and run apply. Then simulate a console edit and read the drift plan. Then check yourself.', quiz:[{q:'What does drift mean in IaC?', options:['Clock skew', 'A slow apply', 'A version upgrade', 'The real setup no longer matches the code'], answer:3, why:'It is usually caused by manual changes.'}, {q:'Why apply from a pipeline and not from a laptop?', options:['It is faster', 'It uses locked shared state and leaves a record', 'Laptops cannot run the tool', 'It skips review'], answer:1, why:'Shared state stops two people from colliding, and the pipeline records who applied what.'}], quizId:'obs-l7'},
+  sources:[`Terraform and OpenTofu documentation`, `AWS CloudFormation documentation`, `Morris, Infrastructure as Code (2nd ed., 2020)`]
 },
 {
   id:'zero-downtime-migrations', title:'Zero-downtime database migrations', minutes:11, tags:['schema migration','expand-contract','backfill','dual write','online DDL'],
-  summary:'Change schemas without downtime with expand → migrate → contract: add new structures compatibly, deploy code that handles both, backfill in batches, switch reads, and only then remove the old structures.',
-  problem:`<p>You want to split <code>users.name</code> into <code>first_name</code> and <code>last_name</code> on a 200-million-row table. Running <code>ALTER TABLE … RENAME</code> and deploying new code at the same moment means a period where old pods query a column that no longer exists. A blocking ALTER on a huge table can also lock writes for hours.</p>`,
-  intuition:`Replacing a bridge while traffic keeps flowing. You build the new bridge next to the old one, open it while the old one still works, gradually move traffic, and only demolish the old bridge when nobody uses it.`,
+  summary:'Change a database without downtime with the expand-contract pattern. Add the new column, write to both, copy old rows in batches, switch reads, and only then remove the old column.',
+  problem:`<h3>A small example</h3><p>The passengers table has 200 million rows. The team wants to rename the column <code>phone</code> to <code>mobile</code>.</p><ul><li>Check-in must stay up during the change.</li><li>Old and new app copies run side by side during a release.</li><li>A blocking change on a huge table can lock writes for hours.</li></ul><p>How can the rename happen with no downtime?</p>`,
   how:{
-    stepper:{title:'Expand → migrate → contract (rename a column)', items:[
-      {title:'1. Expand schema', tag:'additive', text:'Add <code>first_name</code>, <code>last_name</code> as nullable columns. Old code ignores them. Use online DDL (Postgres: adding a nullable column is metadata-only; MySQL: gh-ost / pt-online-schema-change for big tables).'},
-      {title:'2. Dual write', tag:'app v2', text:'Deploy code that writes both <code>name</code> and the new columns, still reading <code>name</code>. Old and new pods can run together safely.'},
-      {title:'3. Backfill', tag:'batches', text:'Copy existing rows in small batches (e.g. 5,000 rows, throttled on replica lag), idempotently, so it can be paused and resumed.'},
-      {title:'4. Verify', tag:'compare', text:'Check that counts and sampled values match; optionally read both and compare in shadow mode.'},
-      {title:'5. Switch reads', tag:'app v3', text:'Deploy code that reads the new columns (behind a flag for quick rollback), still writing both.'},
-      {title:'6. Stop old writes', tag:'app v4', text:'Stop writing <code>name</code> once v3 is stable and no old version is running.'},
-      {title:'7. Contract', tag:'cleanup', text:'Drop <code>name</code> in a later release, after a safety period, with a fresh backup.'}]},
-    deep:`<p><b>Locks:</b> some DDL takes strong locks (e.g. adding a column with a volatile default on old Postgres versions, changing a column type, adding a non-concurrent index). Use <code>CREATE INDEX CONCURRENTLY</code>, add constraints as <code>NOT VALID</code> then <code>VALIDATE</code>, set <code>lock_timeout</code> so a migration fails fast instead of queueing behind a long transaction and blocking everyone.</p><p><b>Big moves between stores</b> (e.g. a table to a new service or database) follow the same pattern at a larger scale: dual write (or CDC), backfill, compare reads (dark reads), switch reads, stop old writes, retire. Stripe described doing this for subscription data across billions of records.</p><p><b>Migrations in CI/CD:</b> run them as separate, backward-compatible pipeline steps, never as an implicit side-effect of app start-up across 50 pods.</p>`
+    intro:'<h3>What happens behind the scenes</h3><p>Follow the rename of <code>phone</code> to <code>mobile</code> through five safe steps.</p>',
+    steps:[
+      {icon:'➕', title:'Expand', text:'Add the new mobile column. Old code ignores it, so nothing breaks.'},
+      {icon:'✍️', title:'Write both', text:'Deploy code that writes phone and mobile. Old and new copies can run together.'},
+      {icon:'📦', title:'Backfill', text:'Copy old rows into the new column in small batches. The job can pause and resume.'},
+      {icon:'🔀', title:'Switch reads', text:'After you check that the values match, deploy code that reads mobile.'},
+      {icon:'🧹', title:'Contract', text:'Stop writing phone, wait a safe period, then drop it in a later release.'}
+    ],
+    stepper:{title:'Expand, migrate, contract: the same plan in detail', items:[
+      {title:'1. Expand the schema', tag:'additive', text:'Add <code>mobile</code> as a nullable column. Old code ignores it. Adding a nullable column in Postgres only changes metadata. For huge MySQL tables, use an online tool such as gh-ost.'},
+      {title:'2. Dual write', tag:'app v2', text:'Deploy code that writes <code>phone</code> and <code>mobile</code>, and still reads <code>phone</code>. Old and new copies are both safe.'},
+      {title:'3. Backfill', tag:'batches', text:'Copy existing rows in small batches, such as 5,000 rows, and slow down when replicas fall behind. Make the job safe to repeat.'},
+      {title:'4. Verify', tag:'compare', text:'Check that counts and sample values match. You can also read both and compare in the background.'},
+      {title:'5. Switch reads', tag:'app v3', text:'Deploy code that reads <code>mobile</code>, behind a flag for a quick return. It still writes both.'},
+      {title:'6. Stop old writes', tag:'app v4', text:'Stop writing <code>phone</code> once v3 is stable and no old version runs.'},
+      {title:'7. Contract', tag:'cleanup', text:'Drop <code>phone</code> in a later release, after a safe period and a fresh backup.'}]},
+    html:`<h3>Everyday comparison</h3><p>Think of replacing a bridge while traffic keeps flowing.</p><div class="simple-table">${h.table(['Replacing a bridge', 'Migration'], [['Build the new bridge next to the old one', 'Add the new column next to the old one.'], ['Open it while the old one still works', 'Write to both while both are valid.'], ['Move traffic over gradually', 'Move reads over after checking.'], ['Remove the old bridge when nobody uses it', 'Drop the old column last.']])}</div><div class="callout tip"><b>Important point</b><p>Never rename or drop a column in the same release as the code that needs the change.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Step', 'Safety check'], [['Backfill', 'Use small batches and slow down if replicas lag.'], ['Switch reads', 'Use a flag so you can switch back fast.'], ['Drop the old column', 'Wait a safe period and take a backup first.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>200,000,000 rows ÷ 5,000 rows per batch = 40,000 batches. At one batch each second, that is 40,000 seconds, about 11 hours. Say the job pauses when replica lag passes 5 seconds, so replicas stay up to date.</p><p>The new column costs space too. Say each phone number takes 12 bytes. Then 200,000,000 × 12 = 2.4 GB of extra data.</p><h4>When it goes wrong</h4><p>Some changes take a strong lock that blocks writes, such as changing a column type or building an index the normal way. Build indexes with <code>CREATE INDEX CONCURRENTLY</code>. Add a rule as <code>NOT VALID</code> first and check it later with <code>VALIDATE CONSTRAINT</code>. Set <code>lock_timeout</code>, say 2 seconds. In Postgres, a waiting lock request makes later writes queue behind it, so giving up fast is safer.</p><h4>How it works inside</h4><p>New code writes both columns during the backfill. So the backfill must only fill rows where mobile is still empty. Otherwise it could overwrite a newer value.</p>`
   },
-  tradeoffs:{use:[`Any schema change on a live system with rolling deploys`, `Data moves between tables, databases or services`], avoid:[`Destructive changes (drop/rename) in the same release as the code change`, `Huge single-transaction backfills`], alt:[`Scheduled maintenance windows (simpler, but downtime)`, `New table + view for complex reshapes`]},
+  tradeoffs:{use:[`Use these steps for any change to the passengers table on a live system.`, `Use them when data moves between tables, databases or services.`], avoid:[`Do not rename or drop a column in the same release as the code change.`, `Do not run one huge backfill in a single transaction.`], alt:[`Use a maintenance window, which is simpler but causes downtime.`, `Use a new table with a view for a complex reshape.`]},
   real:[
-    {co:'GitHub gh-ost', tier:'confirmed', text:'GitHub built gh-ost, a triggerless online schema migration tool for MySQL that copies the table and tails the binlog, so large migrations can be throttled and paused without locking production.', src:'GitHub Engineering, “gh-ost: GitHub’s online schema migration tool for MySQL” (2016)'},
-    {co:'Stripe', tier:'confirmed', text:'Stripe described a four-step online migration pattern (dual writing, changing reads, changing writes, removing old data) to move live data without downtime.', src:'Stripe Engineering, “Online migrations at scale” (2017)'},
-    {co:'Postgres', tier:'confirmed', text:'PostgreSQL supports CREATE INDEX CONCURRENTLY and NOT VALID constraints so indexes and constraints can be added without blocking writes for long periods.', src:'PostgreSQL documentation'}
+    {co:'GitHub', tier:'confirmed', text:'GitHub built gh-ost, a tool that changes big MySQL tables by copying them in the background. It can be throttled and paused without locking production.', src:'GitHub Engineering, gh-ost (2016)'},
+    {co:'Stripe', tier:'confirmed', text:'Stripe described four steps for online data moves: dual write, change reads, change writes, and remove the old data.', src:'Stripe Engineering, Online migrations at scale (2017)'}
   ],
-  mistakes:[`Renaming or dropping columns while old code still runs`, `Backfills that saturate the primary and spike replica lag`, `No lock timeout, so a migration waits behind a long query and blocks all writes`],
-  interview:[`Describe expand/contract with dual writes and backfill when a design needs a schema change`],
-  tryit:{note:'Order the steps for safely renaming a column:', mount:host => orderGame(host, ['Add the new nullable column', 'Deploy code that writes both columns', 'Backfill old rows in small batches', 'Verify old and new values match', 'Deploy code that reads the new column', 'Stop writing the old column', 'Drop the old column in a later release'])},
-  sources:[`GitHub gh-ost (2016)`, `Stripe, Online migrations at scale (2017)`, `PostgreSQL docs`, `Sadalage & Ambler, Refactoring Databases (2006)`]
+  mistakes:[`Renaming or dropping a column while old code still runs.`, `Running a backfill so fast that it overloads the primary database.`, `Setting no lock timeout, so a migration waits behind a long query and blocks every write.`],
+  interview:[`When a design needs a schema change, describe expand, dual write, backfill and contract.`],
+  tryit:[
+    {quiz:[{q:'Why backfill in small batches?', options:['A huge single job can overload the database and make replicas lag', 'SQL requires batches', 'It makes old code stop working', 'It skips verification'], answer:0, why:'Small, throttled batches keep check-in fast during the copy.'}, {q:'Why deploy code that writes both columns first?', options:['It removes the old column', 'Old and new app copies both stay correct while they run together', 'It makes queries faster', 'It avoids a backup'], answer:1, why:'During a rolling release, both versions are live at the same time.'}]},
+    {note:'Order the steps for safely renaming a column:', mount:host => orderGame(host, ['Add the new nullable column', 'Deploy code that writes both columns', 'Backfill old rows in small batches', 'Check that old and new values match', 'Deploy code that reads the new column', 'Stop writing the old column', 'Drop the old column in a later release'], '✓ All seven steps in order. Old and new code worked at every stage.')}
+  ],
+  sources:[`GitHub gh-ost (2016)`, `Stripe, Online migrations at scale (2017)`, `PostgreSQL documentation`, `Sadalage and Ambler, Refactoring Databases (2006)`]
 },
 {
   id:'finops', title:'FinOps and cloud cost', minutes:10, tags:['FinOps','cost','reserved','spot','egress','unit economics'],
-  summary:'Cloud cost is an engineering metric. Measure cost per unit of business (per order, per stream-hour), commit to steady baselines, use spot for interruptible work, right-size, and watch data transfer, storage and log bills.',
-  problem:`<p>The cloud bill doubled in six months while traffic grew 30%. Nobody owns it: there are idle staging clusters running all weekend, oversized databases “just in case”, terabytes of debug logs, and cross-AZ traffic nobody knew was billed. Finance asks engineering why. Engineering asks finance which service.</p>`,
-  intuition:`An electricity bill for a big joint family. Until each room has its own meter (cost allocation), nobody turns off the AC. Once you see “AC in room 3 = ₹4,000”, behaviour changes. Then you buy a cheaper monthly plan for the base load (commitments) and use cheap off-peak power for the washing machine (spot).`,
+  summary:'Cloud cost is an engineering number. Measure the cost per check-in and commit to the steady baseline. Use cheap spare capacity for work that can be interrupted, and watch data transfer and logs.',
+  problem:`<h3>A small example</h3><p>The cloud bill for the check-in app doubled in six months. Traffic grew only 30%.</p><ul><li>Test servers run all weekend.</li><li>Databases are bigger than they need to be.</li><li>Debug logs are kept for years.</li></ul><p>Who owns the bill, and where can the app save money without hurting passengers?</p>`,
   how:{
-    steps:[`<b>Visibility</b>: tag every resource with owner/service/env; allocate shared costs; show each team its bill.`, `<b>Unit economics</b>: cost per order, per 1,000 requests, per streaming hour, per tenant. Growth is fine if unit cost falls.`, `<b>Rate optimisation</b>: commit (reserved instances, savings plans) for steady baseline; spot/preemptible for stateless, interruptible, batch work.`, `<b>Usage optimisation</b>: right-size, autoscale, schedule non-prod off at night, delete orphans (unattached disks, old snapshots), set log/metric retention, use storage tiers.`, `<b>Architecture</b>: cut data transfer (cross-AZ chatter, internet egress via CDN), cache, compress, and choose managed vs self-run deliberately.`],
+    intro:'<h3>What happens behind the scenes</h3><p>Follow the check-in bill from a surprise to a plan.</p>',
+    steps:[
+      {icon:'🏷️', title:'Tag everything', text:'Label each resource with its team and service. Then each team can see its own bill.'},
+      {icon:'🧮', title:'Measure cost per unit', text:'Track the cost per check-in, not only the total. Growth is fine if the cost per check-in falls.'},
+      {icon:'💳', title:'Pay less per unit', text:'Commit to the steady baseline for a discount, called a savings plan. Use spot capacity, which is spare servers sold cheaply, for work that can be interrupted.'},
+      {icon:'📉', title:'Use less', text:'Right-size oversized servers and turn test systems off at night. Delete forgotten disks and old snapshots.'},
+      {icon:'🏗️', title:'Change the design', text:'Cut data transfer and log volume. A CDN and a shorter log retention can save more than server tweaks.'}
+    ],
     mount:host => finopsCalc(host),
-    deep:`<p><b>Hidden costs:</b> cross-AZ data transfer (per GB, both directions on some clouds), NAT gateway processing, load balancer capacity units, observability ingest (often a top-5 line item), managed-service request fees, and idle provisioned throughput (IOPS, DynamoDB capacity, Kafka brokers).</p><p><b>Spot safely:</b> diversify instance types and AZs, handle the interruption notice (drain, checkpoint), keep a baseline on on-demand or committed capacity, and never put stateful single-copy data on spot.</p><p><b>FinOps practice:</b> the FinOps Foundation describes three iterative phases, Inform → Optimise → Operate, with shared responsibility between engineering, finance and product.</p>`
+    html:`<h3>Everyday comparison</h3><p>Think of the electricity bill of a big family.</p><div class="simple-table">${h.table(['Family electricity bill', 'Cloud bill'], [['A meter in each room', 'Tags show each team’s cost.'], ['A cheaper monthly plan for steady use', 'Commit to the steady baseline.'], ['Cheap off-peak power for the washing machine', 'Spot capacity for work that can be interrupted.']])}</div><div class="callout tip"><b>Important point</b><p>You cannot save on a bill that nobody can see. Start with tags and cost per unit.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Saving', 'Type'], [['Commit to the baseline', 'Pay less per unit.'], ['Turn test servers off at night', 'Use less.'], ['Serve images through a CDN', 'Change the design.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Use the calculator's example prices: $0.048 per vCPU-hour and 730 hours a month. Check-in needs 200 vCPUs all day and 600 for 6 hours at the peak.</p><ul><li>Baseline: 200 × 730 = 146,000 vCPU-hours. Peak extra: 400 × 6 × about 30.4 days = 73,000.</li><li>On demand: (146,000 + 73,000) × 0.048 = about $10,500.</li><li>Baseline with a 45% discount: 146,000 × 0.048 × 0.55 = $3,854. Peak on demand is $3,504. Total about $7,400.</li><li>Peak on spot at 70% off: 3,504 × 0.3 = $1,051. Total about $4,900.</li></ul><h4>When it goes wrong</h4><p>Data transfer can rival compute. Say check-in sends 50 TB a month to the internet at $0.09 per GB. That is 50,000 × 0.09 = $4,500, nearly as much as the $4,900 above. A CDN from Module 3 can cut it.</p><p>A commitment is a promise. If use drops below 200 vCPUs, you still pay for all 200. Commit only to the steady floor.</p>`
   },
-  tradeoffs:{use:[`Commitments for predictable baselines`, `Spot for stateless, fault-tolerant and batch workloads`, `Cost per unit as a tracked engineering metric`], avoid:[`Over-committing to capacity you may not need next year`, `Spot for single-copy stateful services`, `Optimising pennies while egress and logs cost lakhs`], alt:[`Owned/colocated hardware for very steady, large workloads (with its own ops cost)`, `Serverless for spiky low-volume work`]},
+  tradeoffs:{use:[`Commit to the steady 200 vCPU baseline of check-in.`, `Use spot capacity for stateless workers that can be retried.`, `Track the cost per check-in as an engineering number.`], avoid:[`Do not commit to capacity you may not need next year.`, `Do not put the only copy of data on spot servers.`, `Do not save pennies on servers while data transfer and logs cost far more.`], alt:[`Use serverless for spiky, low-volume work.`, `Use your own hardware for very steady, large workloads, but count the work to run it.`]},
   real:[
-    {co:'FinOps Foundation', tier:'confirmed', text:'A Linux Foundation project defining FinOps practices and the Inform, Optimise and Operate phases for managing cloud spend collaboratively.', src:'FinOps Foundation — FinOps Framework'},
-    {co:'AWS pricing models', tier:'confirmed', text:'AWS advertises Savings Plans at up to 72% off on-demand and Spot Instances at up to 90% off, with Spot capacity reclaimable at two minutes’ notice.', src:'AWS Savings Plans and EC2 Spot documentation/pricing pages'},
-    {co:'37signals cloud exit', tier:'confirmed', text:'37signals (Basecamp, HEY) publicly described moving its steady workloads from public cloud to owned hardware, projecting millions of dollars in savings over five years. It is a reminder that the right answer depends on workload shape and team skills.', src:'David Heinemeier Hansson / 37signals blog posts (2022–2023)'}
+    {co:'FinOps Foundation', tier:'confirmed', text:'This Linux Foundation project describes FinOps practices and the phases Inform, Optimise and Operate.', src:'FinOps Foundation, FinOps Framework'},
+    {co:'AWS', tier:'confirmed', text:'AWS advertises Savings Plans up to 72% below on-demand and Spot capacity up to 90% below, with Spot servers reclaimable at two minutes’ notice.', src:'AWS Savings Plans and EC2 Spot pricing pages'}
   ],
-  mistakes:[`Untagged resources with no owner`, `Debug-level logs at full retention in production`, `Staging environments running 24×7`],
-  interview:[`Mention cost per unit, commitments + spot, and egress/caching when asked to cost-optimise a design`],
-  tryit:{note:'Try the calculator above with a big daily peak. Then classify each saving:', mount:host => sortGame(host, [
-    {t:'Buy a 1-year savings plan for the always-on baseline', c:'rate', why:'Same usage, lower price.'},
-    {t:'Shut down staging clusters at night and weekends', c:'use', why:'Use less.'},
-    {t:'Serve images through a CDN to cut origin egress', c:'arch', why:'Architecture change.'},
-    {t:'Run video transcoding workers on spot instances', c:'rate', why:'Cheaper capacity for interruptible work.'},
-    {t:'Downsize a database running at 8% CPU', c:'use', why:'Right-sizing.'},
-    {t:'Keep chatty services in the same AZ as their database', c:'arch', why:'Avoid cross-AZ transfer.'}
-  ], [{id:'rate', label:'Rate (pay less per unit)'}, {id:'use', label:'Usage (use less)'}, {id:'arch', label:'Architecture'}])},
-  sources:[`FinOps Foundation Framework`, `AWS Well-Architected Cost Optimization Pillar`, `AWS Savings Plans / Spot pricing pages`]
+  mistakes:[`Leaving resources untagged, so nobody owns them.`, `Keeping debug logs at full retention in production.`, `Running test environments 24 hours a day.`],
+  interview:[`Mention cost per unit, commitments plus spot, and data transfer and caching when asked to cut cost.`],
+  tryit:[
+    {quiz:[{q:'Which workload fits spot servers best?', options:['The only copy of passenger data', 'A single primary database', 'A login server with no backup', 'Stateless workers that can be retried'], answer:3, why:'Spot servers can be reclaimed, so only work that can be repeated belongs there.'}, {q:'Why track the cost per check-in?', options:['It shows that total cost can rise while cost per check-in falls, which is healthy growth', 'It lowers the bill by itself', 'It replaces tags', 'Finance requires it'], answer:0, why:'The total alone cannot tell growth from waste.'}]},
+    {note:'Try the calculator above with a big daily peak. Then classify each saving:', mount:host => sortGame(host, [
+      {t:'Buy a 1-year savings plan for the always-on baseline', c:'rate', why:'The same use at a lower price.'},
+      {t:'Shut down test systems at night and on weekends', c:'use', why:'It uses less.'},
+      {t:'Serve boarding pass images through a CDN to cut origin transfer', c:'arch', why:'It changes the design.'},
+      {t:'Run boarding pass PDF workers on spot servers', c:'rate', why:'It is cheaper capacity for interruptible work.'},
+      {t:'Downsize a database running at 8% CPU', c:'use', why:'It is right-sizing.'},
+      {t:'Keep chatty services in the same zone as their database', c:'arch', why:'It avoids data transfer between zones.'}
+    ], [{id:'rate', label:'Rate (pay less per unit)'}, {id:'use', label:'Usage (use less)'}, {id:'arch', label:'Design change'}])}
+  ],
+  sources:[`FinOps Foundation Framework`, `AWS Well-Architected Cost Optimization Pillar`, `AWS Savings Plans and Spot pricing pages`]
 }
 ];
 
@@ -457,75 +528,77 @@ SDA.register({
   outcomes:['Instrument a service with correlated logs, metrics and traces', 'Pick the right signals (golden/RED/USE) and alert on SLO burn rate without alert fatigue', 'Run an incident and write a blameless postmortem', 'Design a CI/CD pipeline with safe progressive delivery and automated rollback', 'Change schemas and infrastructure safely and reason about cloud cost per unit'],
   lessons,
   quiz:[
-    {q:'Which signal best shows WHERE time went in one slow request across services?', options:['A CPU metric', 'A distributed trace', 'An access log on the gateway', 'A dashboard average'], answer:1, why:'Spans show per-service timing.'},
-    {q:'Why shouldn’t user_id be a metric label?', options:['It is private', 'It creates huge cardinality: one time series per user', 'Metrics can’t hold strings', 'It slows logging'], answer:1, why:'Put it in logs or trace attributes.'},
-    {q:'The four golden signals are…', options:['CPU, memory, disk, network', 'Latency, traffic, errors, saturation', 'Rate, errors, duration, uptime', 'p50, p90, p99, max'], answer:1, why:'From Google’s SRE book.'},
-    {q:'USE stands for…', options:['Users, Sessions, Errors', 'Utilisation, Saturation, Errors', 'Uptime, Speed, Efficiency', 'Usage, Spend, Effort'], answer:1, why:'Brendan Gregg’s method for resources.'},
-    {q:'A 99.9% SLO and a 10% error rate means a burn rate of…', options:['10', '100', '1,000', '0.1'], answer:1, why:'10% ÷ 0.1%.'},
-    {q:'What should happen first in an incident?', options:['Find the root cause', 'Mitigate user impact (rollback, failover, kill switch)', 'Write the postmortem', 'Assign blame'], answer:1, why:'Stop the bleeding first.'},
-    {q:'Which deployment exposes the fewest users to a bad release before detection?', options:['Blue-green', 'Rolling', 'Canary', 'All at once'], answer:2, why:'Small cohort first.'},
-    {q:'DORA’s four key metrics include…', options:['Lines of code', 'Deployment frequency and change failure rate', 'Number of meetings', 'Test count'], answer:1, why:'Plus lead time and time to restore.'},
-    {q:'To rename a column with zero downtime you should…', options:['Rename and deploy simultaneously', 'Expand (add new), dual-write, backfill, switch reads, then contract', 'Take the site down', 'Drop and recreate the table'], answer:1, why:'Old and new code must both work during rollout.'},
-    {q:'Infrastructure drift is…', options:['Real infra diverging from code/state', 'A Terraform bug', 'Clock skew', 'A cost spike'], answer:0, why:'Usually manual changes.'},
-    {q:'Best fit for spot instances:', options:['A single-node primary database', 'Stateless video transcoding workers', 'The only Kafka broker', 'A payment ledger'], answer:1, why:'Interruptible, retryable work.'},
-    {type:'scenario', q:'Checkout p99 latency doubled after 8 PM yesterday and nobody knows why. Walk through how you’d investigate with observability tools.', answer:'<ol><li>Check the <b>RED dashboard</b> and SLO burn for checkout: is it all requests or a subset (endpoint, region, app version, tenant)? Look for deploy/config markers around 8 PM.</li><li>Use <b>exemplars / tail-sampled traces</b> of slow requests; find the span on the critical path (e.g. a payment-gateway call or a DB query).</li><li>Drill into that dependency’s <b>USE</b> metrics (pool saturation, DB CPU/locks, replica lag) and its own RED metrics.</li><li>Read <b>logs filtered by trace_id</b> for the slow spans (errors, retries, query plans).</li><li>Mitigate (rollback, flag off, scale pool), then fix the cause (missing index, N+1, retry storm) and add an alert or test so it can’t recur silently.</li></ol>'},
-    {type:'scenario', q:'Design the release process for a payments service that deploys 10 times a day.', answer:'<ul><li><b>CI</b>: fast tests, contract tests with dependents, security scans; one signed image per commit.</li><li><b>CD</b>: staging with e2e tests → production canary (1% of traffic, matched baseline) per region, automated canary analysis on payment success rate per bank/PSP, latency and errors → 10% → 50% → 100% with bake times; automatic rollback.</li><li><b>Data</b>: expand/contract migrations as separate steps; idempotent APIs so retries during rollout are safe.</li><li><b>Flags</b> for risky features with kill switches; deploy freezes during peak events (salary day, sales).</li><li>Track DORA metrics and SLO burn per release.</li></ul>'}
+    {q:'Which signal best shows where the time went in one slow request across services?', options:['A CPU metric', 'A distributed trace', 'An access log on the gateway', 'A dashboard average'], answer:1, why:'Spans show how long each step took.'},
+    {q:'Why should passenger ID not be a metric label?', options:['It is private', 'Metrics cannot hold text', 'It slows logging', 'It creates one time series per passenger'], answer:3, why:'The number of series explodes. Put it in logs or trace attributes.'},
+    {q:'The four golden signals are…', options:['CPU, memory, disk, network', 'Rate, errors, duration, uptime', 'Latency, traffic, errors, saturation', 'p50, p90, p99, max'], answer:2, why:'They come from Google’s SRE book.'},
+    {q:'USE stands for…', options:['Users, sessions, errors', 'Utilisation, saturation, errors', 'Uptime, speed, efficiency', 'Usage, spend, effort'], answer:1, why:'Brendan Gregg’s method for resources.'},
+    {q:'A 99.9% SLO and a 10% error rate mean a burn rate of…', options:['10', '1,000', '0.1', '100'], answer:3, why:'10% ÷ 0.1% = 100.'},
+    {q:'What should happen first in an incident?', options:['Find the root cause', 'Reduce passenger impact by rolling back or failing over', 'Write the postmortem', 'Assign blame'], answer:1, why:'Restore service first.'},
+    {q:'Which rollout exposes the fewest passengers to a bad release before it is noticed?', options:['Blue-green', 'Rolling', 'All at once', 'Canary'], answer:3, why:'A canary starts with a small share.'},
+    {q:'DORA’s four key metrics include…', options:['Lines of code', 'Number of meetings', 'Deployment frequency and change failure rate', 'Test count'], answer:2, why:'The others are lead time and time to restore.'},
+    {q:'To rename a column with no downtime, you should…', options:['Rename it and deploy at the same moment', 'Take the site down', 'Drop and recreate the table', 'Expand, write both, backfill, switch reads, then contract'], answer:3, why:'Old and new code must both work during the rollout.'},
+    {q:'Infrastructure drift is…', options:['The real setup diverging from the code', 'A Terraform bug', 'Clock skew', 'A cost spike'], answer:0, why:'It is usually caused by manual changes.'},
+    {q:'Which is the best fit for spot servers?', options:['A single primary database', 'Stateless workers that can be retried', 'The only copy of passenger data', 'A login server with no backup'], answer:1, why:'Spot servers can be reclaimed, so only repeatable work belongs there.'},
+    {type:'scenario', q:'Check-in p99 latency doubled after 5 AM yesterday and nobody knows why. Walk through how you would investigate with observability tools.', answer:'<ol><li>Check the <b>RED dashboard</b> and the SLO burn for check-in. Is it all requests or only some, for example one endpoint, region or app version? Look for release or setting markers around 5 AM.</li><li>Open <b>slow traces</b>, kept by tail sampling, and find the span on the critical path, such as a seat query or a baggage call.</li><li>Check that dependency’s <b>USE</b> numbers: pool saturation, database CPU, locks and replica lag.</li><li>Read the <b>logs for that trace ID</b> to see why the slow span was slow.</li><li><b>Mitigate first</b> if passengers are hurt. Roll back the release or switch a flag off, then fix the cause.</li><li>Add an alert or a dashboard so the next case is found faster.</li></ol>'},
+    {type:'scenario', q:'Design the release process for a check-in service that deploys 10 times a day.', answer:'<ul><li><b>CI:</b> fast tests, contract tests with services that depend on it, security scans and one signed image per commit.</li><li><b>CD:</b> staging with end-to-end tests, then a production canary of 1% of traffic in each region. Compare it with a matching baseline using automatic analysis of check-in success rate, latency and errors. Then 10%, 50% and 100%, with waits and automatic rollback.</li><li><b>Data:</b> run database changes as separate expand and contract steps, and make requests safe to repeat so retries during a rollout do no harm.</li><li><b>Flags:</b> use flags with kill switches for risky features, and freeze releases during peak travel days.</li><li><b>People:</b> mark releases on dashboards and keep a runbook for rollback.</li></ul>'}
   ],
   cheatsheet:[
-    {h:'🔭 Signals', items:['Metrics: cheap, aggregated, for alerts and dashboards', 'Logs: structured JSON with trace_id', 'Traces: spans, critical path, W3C traceparent', 'OpenTelemetry SDK + Collector', 'Histograms for percentiles; watch cardinality', 'Head vs tail sampling']},
-    {h:'🩺 What to measure', items:['Golden: latency, traffic, errors, saturation', 'RED per service: rate, errors, duration', 'USE per resource: utilisation, saturation, errors', 'Business signals: orders/min, payment success']},
-    {h:'🚨 Alerting & incidents', items:['Page only urgent + actionable + user-visible', 'Burn rate = error rate ÷ (1 − SLO)', 'Page 14.4× (1h & 5m), 6× (6h & 30m); ticket 1× (3d)', 'IC + ops + comms + scribe; mitigate first', 'Blameless postmortem with owned actions']},
-    {h:'🚀 Delivery', items:['Build once, promote the same artifact', 'Waves: one box → AZ → region, bake time', 'Rolling / blue-green / canary trade-offs', 'Automated canary analysis + rollback', 'DORA: frequency, lead time, CFR, time to restore']},
-    {h:'🧱 Infra & data changes', items:['IaC: plan in PR, apply from CI, remote locked state', 'Detect and fix drift in code', 'Expand → dual write → backfill → switch reads → contract', 'Online DDL, CONCURRENTLY, lock_timeout']},
-    {h:'💸 FinOps', items:['Tag everything; cost per unit', 'Commit baseline; spot for interruptible', 'Right-size; schedule non-prod off', 'Watch egress, cross-AZ, logs, NAT', 'Inform → Optimise → Operate']}
+    {h:'🔭 Signals', items:['Metrics: cheap numbers over time, for alerts and dashboards', 'Logs: structured JSON with a trace ID', 'Traces: spans and the critical path, W3C traceparent', 'OpenTelemetry SDK and Collector', 'Histograms give percentiles, so watch label count', 'Head and tail sampling']},
+    {h:'🩺 What to measure', items:['Golden: latency, traffic, errors, saturation', 'RED for each service: rate, errors, duration', 'USE for each resource: utilisation, saturation, errors', 'Business signals: check-ins per minute, boarding passes issued']},
+    {h:'🚨 Alerting and incidents', items:['Page only urgent, actionable, passenger-visible problems', 'Burn rate = error rate ÷ (1 − SLO)', 'Page at 14.4 (1 h and 5 min) and 6 (6 h and 30 min), ticket at 1 (3 days)', 'Incident commander, ops, comms and scribe, and mitigate first', 'Blameless postmortem with owned actions']},
+    {h:'🚀 Delivery', items:['Build once and promote the same image', 'Waves: one server, one zone, one region, with waits', 'Rolling, blue-green and canary trade-offs', 'Automatic canary analysis and rollback', 'DORA: frequency, lead time, failure rate, time to restore']},
+    {h:'🧱 Infrastructure and data changes', items:['IaC: plan in a pull request, apply from a pipeline, locked remote state', 'Find drift and fix it in code', 'Expand, write both, backfill, switch reads, contract', 'Online changes, CONCURRENTLY and lock_timeout']},
+    {h:'💸 FinOps', items:['Tag everything and track cost per unit', 'Commit to the baseline and use spot for interruptible work', 'Right-size and turn test systems off when idle', 'Watch data transfer, zone traffic, logs and NAT', 'Inform, Optimise, Operate']}
   ],
   glossary:[
-    {term:'Observability', def:'The ability to understand a system’s internal state from its external outputs (metrics, logs, traces).'},
-    {term:'Metric', aka:['metrics', 'time series'], def:'A numeric measurement recorded over time, such as request rate or latency.'},
-    {term:'Structured logging', aka:['structured logs'], def:'Writing logs as machine-parseable records (e.g. JSON) with consistent fields.'},
-    {term:'Distributed tracing', aka:['trace', 'traces', 'tracing'], def:'Recording a request’s path through services as a tree of timed spans.'},
-    {term:'Span (tracing)', aka:['trace span'], def:'One timed operation within a trace, with a parent, attributes and duration.'},
-    {term:'Trace ID', aka:['trace_id', 'traceparent'], def:'An identifier shared by all spans and logs of one request, propagated across services.'},
-    {term:'OpenTelemetry', aka:['OTel'], def:'A vendor-neutral CNCF standard and toolkit for generating and exporting traces, metrics and logs.'},
-    {term:'Critical path', def:'The chain of operations that determines a request’s total duration.'},
-    {term:'Tail sampling', aka:['head sampling'], def:'Deciding which traces to keep after they complete (tail) rather than at the start (head).'},
-    {term:'Exemplar', aka:['exemplars'], def:'A sample trace ID attached to a metric data point, linking a spike to example requests.'},
-    {term:'Histogram', aka:['histograms'], def:'A metric that counts observations into buckets, allowing percentiles to be computed.'},
-    {term:'Golden signals', aka:['four golden signals'], def:'Latency, traffic, errors and saturation: the core signals for user-facing systems.'},
-    {term:'RED method', def:'Rate, Errors and Duration metrics for every request-driven service.'},
-    {term:'USE method', def:'Utilisation, Saturation and Errors checks for every resource.'},
-    {term:'Saturation', def:'How full a resource is, often measured as queued work or pool usage.'},
-    {term:'Alert fatigue', def:'Desensitisation from too many, often non-actionable, alerts.'},
-    {term:'Runbook', aka:['runbooks', 'playbook'], def:'Documented steps for diagnosing and handling a specific alert or task.'},
-    {term:'On-call', def:'A rotation where engineers are responsible for responding to production alerts.'},
-    {term:'Incident commander', aka:['IC'], def:'The person coordinating an incident response, delegating work and decisions.'},
-    {term:'Postmortem', aka:['postmortems', 'post-incident review'], def:'A written analysis of an incident: timeline, impact, contributing factors and actions.'},
-    {term:'Blameless postmortem', aka:['blameless'], def:'A postmortem focused on systemic causes rather than individual fault.'},
-    {term:'Continuous integration', aka:['CI'], def:'Merging small changes frequently with automated builds and tests on each change.'},
-    {term:'Continuous delivery', aka:['CD', 'continuous deployment'], def:'Keeping every build releasable and deploying it through automated stages.'},
-    {term:'DORA metrics', def:'Deployment frequency, lead time for changes, change failure rate and time to restore service.'},
-    {term:'Trunk-based development', def:'Developers integrate small changes into the main branch frequently, using flags for incomplete work.'},
-    {term:'Bake time', def:'A waiting period after deploying to a stage, while metrics are watched before proceeding.'},
-    {term:'Rolling update', aka:['rolling deployment'], def:'Replacing instances of an application gradually in batches.'},
-    {term:'Blue-green deployment', aka:['blue-green'], def:'Switching traffic between two identical environments, one running the new version.'},
-    {term:'Canary release', aka:['canary', 'canary deployment'], def:'Releasing to a small subset of traffic first and comparing its metrics before rolling out further.'},
-    {term:'Automated canary analysis', aka:['Kayenta'], def:'Statistically comparing canary and baseline metrics to decide whether to promote.'},
-    {term:'Dark launch', aka:['shadow launch'], def:'Running new code on real traffic without exposing its results to users.'},
-    {term:'GitOps', def:'Managing deployments by declaring desired state in git and reconciling systems to it automatically.'},
-    {term:'Infrastructure as code', aka:['IaC'], def:'Defining infrastructure in versioned, reviewable code applied by tools.'},
-    {term:'Terraform', aka:['OpenTofu'], def:'A declarative infrastructure-as-code tool that plans and applies changes using a state file.'},
-    {term:'Configuration drift', aka:['drift'], def:'Divergence between the real infrastructure and its code definition.'},
-    {term:'Expand-contract migration', aka:['expand and contract', 'parallel change'], def:'A schema change done in compatible steps: add new, migrate, then remove old.'},
-    {term:'Backfill', def:'Populating new columns or stores with existing data, usually in batches.'},
-    {term:'Online schema change', aka:['online DDL', 'gh-ost'], def:'Altering a table’s schema without blocking reads and writes for long periods.'},
-    {term:'FinOps', def:'The practice of managing cloud costs collaboratively across engineering, finance and product.'},
-    {term:'Unit economics', aka:['cost per unit'], def:'Cost measured per business unit, such as per order or per stream-hour.'},
-    {term:'Spot instances', aka:['spot instance', 'spot capacity', 'preemptible VMs'], def:'Discounted spare cloud capacity that the provider can reclaim at short notice.'},
-    {term:'Savings plan', aka:['reserved instances', 'committed use discount'], def:'A discount in exchange for committing to a level of usage for one or three years.'},
-    {term:'Egress', aka:['data transfer out'], def:'Data sent out of a cloud region or provider, typically billed per GB.'},
-    {term:'Right-sizing', def:'Matching resource sizes to actual usage to avoid paying for idle capacity.'}
+    {term:'Observability', def:'How well you can understand what is happening inside a system by looking at what it outputs. Example: from metrics, logs and traces you can tell why check-in is slow.'},
+    {term:'Metric', aka:['metrics', 'time series'], def:'A number tracked over time. Example: check-ins per minute, or p99 latency every minute.'},
+    {term:'Structured logging', aka:['structured logs', 'structured records'], def:'Writing logs as records with named fields, such as JSON, so they can be searched. Example: service = booking, trace_id = abc, error = seat taken.'},
+    {term:'Distributed tracing', aka:['trace', 'traces', 'tracing'], def:'Recording the path of one request through many services as a tree of timed steps. Example: one check-in shows the time spent in login, booking, seats and baggage.'},
+    {term:'Span (tracing)', aka:['trace span', 'span', 'spans'], def:'One timed step inside a trace. Example: the seat lookup took 120 ms.'},
+    {term:'Trace ID', aka:['trace_id', 'traceparent'], def:'An ID shared by every span and log line of one request, passed from service to service. Example: search the logs for one trace ID to see the whole request.'},
+    {term:'OpenTelemetry', aka:['OTel'], def:'A free, vendor-neutral toolkit for collecting traces, metrics and logs. Example: instrument the check-in service once and send the data to any tool.'},
+    {term:'Critical path', def:'The chain of steps that decides how long the whole request takes. Example: if seats take 120 ms and baggage takes 20 ms in parallel, the seats call is on the critical path.'},
+    {term:'Tail sampling', aka:['head sampling'], def:'Choosing which traces to keep after they finish, so slow and failed ones are kept. Head sampling decides at the start instead. Example: keep every trace slower than 2 seconds.'},
+    {term:'Exemplar', aka:['exemplars'], def:'A sample trace ID attached to a metric point, so you can jump from a spike to a real request. Example: click the latency spike at 5:02 AM and open one slow request.'},
+    {term:'Histogram', aka:['histograms'], def:'A metric that counts values into ranges, called buckets, so percentiles can be calculated. Example: how many requests took 0 to 100 ms, 100 to 200 ms and so on.'},
+    {term:'Golden signals', aka:['four golden signals'], def:'Four numbers that describe the health of a user-facing system: latency, traffic, errors and saturation. Example: a check-in dashboard shows all four.'},
+    {term:'RED method', def:'A checklist for services: Rate, Errors and Duration. Example: for the Booking service, graph requests per second, failed requests and request time.'},
+    {term:'USE method', def:'A checklist for resources: Utilisation, Saturation and Errors. Example: for a database connection pool, check how many are in use, how many requests wait and how many fail.'},
+    {term:'Saturation', def:'How full a resource is, often shown as waiting work or pool usage. Example: 95 of 100 database connections are in use.'},
+    {term:'Alert fatigue', aka:['too many alerts'], def:'Becoming numb to alerts because there are too many and many need no action. Example: after 140 pages a week, an engineer starts ignoring them.'},
+    {term:'Runbook', aka:['runbooks', 'playbook'], def:'Written steps for handling a specific alert or task. Example: “If check-in errors rise: check the last release, then roll back if needed.”'},
+    {term:'On-call', def:'A rota where engineers take turns being ready to respond to production alerts. Example: one engineer carries the pager this week.'},
+    {term:'Incident commander', aka:['IC'], def:'The person who coordinates an incident response and decides who does what. Example: they tell one person to roll back and another to update the airport staff.'},
+    {term:'Postmortem', aka:['postmortems', 'post-incident review'], def:'A written review after an incident: what happened, the impact, the causes and the actions to take. Example: a one-page review of the 5 AM check-in outage.'},
+    {term:'Blameless postmortem', aka:['blameless'], def:'A postmortem that looks for what in the system allowed the mistake, not who made it. Example: ask why one command could delete production, not who typed it.'},
+    {term:'Continuous integration', aka:['CI'], def:'Merging small changes often, with an automatic build and tests on every change. Example: each pull request runs unit tests within minutes.'},
+    {term:'Continuous delivery', aka:['CD', 'continuous deployment'], def:'Keeping every build ready to release and moving it through stages automatically. Example: a passing change goes to staging, then to production in waves.'},
+    {term:'DORA metrics', def:'Four numbers about delivery: how often you deploy, how long a change takes to reach users, how often changes fail and how fast you recover. Example: deploy 10 times a day, with 2% of changes failing.'},
+    {term:'Trunk-based development', def:'Everyone merges small changes into the main branch often, and uses flags to hide unfinished work. Example: the check-in app has no long-lived branches.'},
+    {term:'Bake time', def:'A wait after releasing to one stage, while you watch the metrics, before moving on. Example: wait 30 minutes after the first server.'},
+    {term:'Rolling update', aka:['rolling deployment'], def:'Replacing servers a few at a time. Example: replace 2 of 10 servers, wait, then replace 2 more.'},
+    {term:'Blue-green deployment', aka:['blue-green'], def:'Running two identical environments and switching all traffic from the old one (blue) to the new one (green). Example: switch back to blue if green has a bug.'},
+    {term:'Canary release', aka:['canary', 'canary deployment'], def:'Sending a small share of traffic to the new version first and comparing it with the old one. Example: 5% of check-ins use the new seat map.'},
+    {term:'Automated canary analysis', aka:['Kayenta'], def:'A tool that compares the canary’s metrics with a baseline and decides whether to continue or roll back. Example: errors on the canary rise, so the release is rolled back.'},
+    {term:'Dark launch', aka:['shadow launch'], def:'Running new code on real traffic without showing its results to users. Example: the new seat map code runs on copies of requests, and nobody sees its answers.'},
+    {term:'GitOps', def:'Keeping the wanted state in git and letting an agent make the real system match it. Example: merge a change to a file, and the cluster updates itself.'},
+    {term:'Infrastructure as code', aka:['IaC'], def:'Describing servers, networks and databases in files that are versioned and reviewed. Example: a file says “3 servers and a database”, and a tool creates them.'},
+    {term:'Terraform', aka:['OpenTofu'], def:'A popular infrastructure-as-code tool. It compares your files with reality, shows a plan, then applies it. Example: terraform plan lists what it will add or destroy.'},
+    {term:'Configuration drift', aka:['drift'], def:'When the real setup no longer matches the code. Example: someone deletes a server in the console, so the code says 3 but only 2 exist.'},
+    {term:'Expand-contract migration', aka:['expand and contract', 'parallel change', 'expand-contract'], def:'A safe way to change a database: add the new thing, move data and code over, then remove the old thing. Example: add a mobile column, copy phone into it, switch reads, then drop phone.'},
+    {term:'Backfill', def:'Copying old data into a new column or store, usually in small batches. Example: fill the new mobile column for 200 million existing rows.'},
+    {term:'Online schema change', aka:['online DDL', 'gh-ost'], def:'Changing a table’s structure without blocking reads and writes for long. Example: gh-ost copies a huge table in the background and then swaps it in.'},
+    {term:'FinOps', def:'Managing cloud cost as a team effort between engineering, finance and product. Example: each team sees and owns its own bill.'},
+    {term:'Unit economics', aka:['cost per unit'], def:'Cost measured per business unit. Example: the cost per check-in falls from ₹0.40 to ₹0.30 as the app grows.'},
+    {term:'Spot instances', aka:['spot instance', 'spot capacity', 'preemptible VMs', 'spot servers'], def:'Cheap spare cloud servers that the provider can take back at short notice. Example: use them for boarding pass PDF workers that can be retried.'},
+    {term:'Savings plan', aka:['reserved instances', 'committed use discount', 'savings plans'], def:'A discount for promising to use a certain amount for one or three years. Example: commit to 200 vCPUs for a year and pay about 45% less.'},
+    {term:'Egress', aka:['data transfer out'], def:'Data sent out of a cloud region or provider, usually billed per GB. Example: boarding pass images sent to passengers’ phones.'},
+    {term:'Right-sizing', aka:['right-size', 'right-sized'], def:'Matching server sizes to what is really used. Example: shrink a database that runs at 8% CPU.'},
+    {term:'Dual write', aka:['dual writes'], def:'Writing the same data to both the old and the new place during a migration. Example: write phone and mobile together.'},
+    {term:'Staging environment', aka:['staging'], def:'A copy of production where a release is tested before real users get it. Example: run end-to-end tests of a full check-in there.'}
   ],
-  sources:['Beyer et al., Site Reliability Engineering (2016) and The Site Reliability Workbook (2018)', 'Sigelman et al., Dapper (2010); OpenTelemetry and W3C Trace Context specs', 'Wilkie, The RED Method; Gregg, The USE Method', 'Allspaw, Blameless PostMortems (2012)', 'Forsgren, Humble & Kim, Accelerate (2018); Amazon Builders’ Library — safe deployments', 'Netflix/Google — Kayenta (2018); GitHub gh-ost (2016); Stripe, Online migrations at scale (2017)', 'Terraform/OpenTofu and CloudFormation docs; FinOps Foundation Framework; AWS pricing pages']
+  sources:['Beyer et al., Site Reliability Engineering (2016) and The Site Reliability Workbook (2018)', 'Sigelman et al., Dapper (2010); OpenTelemetry and W3C Trace Context specs', 'Wilkie, The RED Method; Gregg, The USE Method', 'Allspaw, Blameless PostMortems (2012)', 'Forsgren, Humble & Kim, Accelerate (2018); Amazon Builders’ Library, safe deployments', 'Netflix and Google, Kayenta (2018); GitHub gh-ost (2016); Stripe, Online migrations at scale (2017)', 'Terraform/OpenTofu and CloudFormation docs; FinOps Foundation Framework; AWS pricing pages']
 });
 } catch(e){ console.error('[SDA] module observability', e); SDA.errors.push({id:'observability', error:e}); }
 })();
