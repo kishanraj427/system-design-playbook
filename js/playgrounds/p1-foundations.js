@@ -12,8 +12,8 @@ const css = name => getComputedStyle(document.documentElement).getPropertyValue(
 /* ---------------- #1 Request journey ---------------- */
 try {
 SDA.register({kind:'playground', id:'request-journey', module:'foundations', icon:'🌐', title:'Request journey: DNS → TCP → TLS → HTTP',
-  summary:'Change distance, protocol, connection reuse and caching. The animated handshakes and the timing waterfall are computed from your settings.',
-  explain:`<ul><li>Push the round-trip time to 200 ms: handshakes, not your server, dominate a cold page load.</li><li>Turn on <b>connection reuse</b>: TCP and TLS disappear — this is why browsers keep connections alive and backends keep connection pools.</li><li>Compare <b>TLS 1.2 (2 RTT)</b> with <b>TLS 1.3 (1 RTT)</b> and <b>HTTP/3</b>, which folds transport and crypto into one round trip, or zero with 0-RTT resumption.</li><li>A full recursive DNS lookup is slow; that is why answers are cached with TTLs at every layer.</li></ul><p class="lab-hint">Model: request + response = 1 RTT; server = LB 1 ms + app 15 ms + cache 1 ms (+ DB 12 ms on a miss); 60 KB download at 20 Mbps. TCP slow start and packet loss are ignored for clarity.</p>`,
+  summary:'Change the distance, the protocol, the DNS lookup and connection reuse. The page shows every handshake and a timing bar for each step.',
+  explain:`<h3>How to use it</h3><ol><li>Click <b>India → US server</b>. The round-trip time jumps to 220 ms. Note the total.</li><li>Turn on <b>Reuse a warm connection</b>. Watch the TCP and TLS bars disappear.</li><li>Switch the protocol from HTTP/1.1 to HTTP/3 and compare the totals.</li></ol><h3>What to notice</h3><ul><li>On a first visit, the handshakes cost more time than your server's own work.</li><li>This is why browsers keep connections open and why DNS answers are cached.</li></ul><div class="callout tip"><b>Important point</b><p>Every handshake costs at least one round trip. A far-away server pays that cost again and again.</p></div><p class="lab-hint">The model ignores packet loss and TCP slow start.</p>`,
   real:[{co:'IETF / Google', tier:'confirmed', text:'TLS 1.3 (RFC 8446) cut the full handshake to one round trip; QUIC (RFC 9000), originally developed at Google, carries HTTP/3 (RFC 9114) and combines the transport and TLS handshakes.', src:'RFC 8446, RFC 9000, RFC 9114'}, {co:'Browsers & CDNs', tier:'confirmed', text:'Browsers reuse connections (keep-alive) and CDNs terminate TLS near users precisely to avoid paying long round trips for every handshake.', src:'Ilya Grigorik, “High Performance Browser Networking”'}],
   mount(host, api){
     const st = {rtt:80, dns:'resolver', proto:'h2', reuse:false, cache:'miss'};
@@ -29,9 +29,9 @@ SDA.register({kind:'playground', id:'request-journey', module:'foundations', ico
     }
     function steps(ps, total){
       const R = st.rtt, S = [], h3 = st.proto.startsWith('h3');
-      if (st.dns === 'browser') S.push({note:'<b>DNS:</b> answer already in the browser cache — 0 ms.', hl:['br']});
-      else S.push({note:`<b>DNS</b> — ${st.dns === 'full' ? 'full recursive lookup (root → .com → authoritative)' : 'resolver cache hit'}: <b>+${ps[0].ms} ms</b>.`, flow:[['br', 'dns', 'A?'], ['dns', 'br', 'IP']], hl:['dns']});
-      if (st.reuse) S.push({note:'<b>Warm connection reused</b> — no TCP or TLS handshake at all. This is why keep-alive and connection pools matter.', hl:['lb']});
+      if (st.dns === 'browser') S.push({note:'<b>DNS:</b> answer already in the browser cache: 0 ms.', hl:['br']});
+      else S.push({note:`<b>DNS</b>: ${st.dns === 'full' ? 'full recursive lookup (root → .com → authoritative)' : 'resolver cache hit'}: <b>+${ps[0].ms} ms</b>.`, flow:[['br', 'dns', 'A?'], ['dns', 'br', 'IP']], hl:['dns']});
+      if (st.reuse) S.push({note:'<b>Warm connection reused.</b> There is no TCP or TLS handshake at all. This is why keep-alive and connection pools matter.', hl:['lb']});
       else if (h3){ if (st.proto === 'h3z') S.push({note:'<b>QUIC 0-RTT:</b> a returning client sends the request inside its first handshake packet: +0 ms. (0-RTT data can be replayed, so only idempotent requests should use it.)', flow:[['br', 'lb', 'Initial + 0-RTT GET']], hl:['lb']}); else S.push({note:`<b>QUIC:</b> transport and TLS 1.3 handshake in a single round trip: <b>+${R} ms</b>.`, flow:[['br', 'lb', 'Initial'], ['lb', 'br', 'Handshake']], hl:['lb']}); }
       else {
         S.push({note:`<b>TCP:</b> SYN → SYN-ACK → ACK: <b>+${R} ms</b>.`, flow:[['br', 'lb', 'SYN'], ['lb', 'br', 'SYN-ACK'], ['br', 'lb', 'ACK']], hl:['lb'], dur:650});
@@ -51,7 +51,7 @@ SDA.register({kind:'playground', id:'request-journey', module:'foundations', ico
       wf.append(el('div', {class:'row', style:{justifyContent:'space-between', marginBottom:'8px'}}, el('b', null, 'Timing waterfall'), el('span', {class:'mono muted'}, `total ≈ ${Math.round(total)} ms`)));
       ps.forEach(p => {
         const bar = el('div', {class:'wf-bar', style:{left:(off / total * 100) + '%', width:'0%', background:p.c}});
-        wf.append(el('div', {class:'wf-row'}, el('span', {class:'wl', title:p.k}, p.k), el('div', {class:'wf-track'}, bar), el('span', {class:'wt'}, p.ms ? Math.round(p.ms) + ' ms' : '—')));
+        wf.append(el('div', {class:'wf-row'}, el('span', {class:'wl', title:p.k}, p.k), el('div', {class:'wf-track'}, bar), el('span', {class:'wt'}, p.ms ? Math.round(p.ms) + ' ms' : '0 ms')));
         const w = p.ms / total * 100; requestAnimationFrame(() => { bar.style.width = w + '%'; });
         off += p.ms;
       });
@@ -71,7 +71,7 @@ SDA.register({kind:'playground', id:'request-journey', module:'foundations', ico
     const proto = ui.select({label:'Protocol', value:'h2', options:[['h11', 'HTTP/1.1 + TLS 1.2'], ['h2', 'HTTP/2 + TLS 1.3'], ['h3', 'HTTP/3 (QUIC)'], ['h3z', 'HTTP/3 + 0-RTT resumption']], onChange:v => set('proto', v)});
     const cache = ui.select({label:'Server data', value:'miss', options:[['hit', 'Cache hit'], ['miss', 'Cache miss → database']], onChange:v => set('cache', v)});
     const reuse = ui.toggle({label:'Reuse a warm connection (keep-alive)', checked:false, onChange:v => set('reuse', v)});
-    const presets = el('div', {class:'pill-row', style:{marginTop:'10px'}}, ...[['Patna → Mumbai origin', {rtt:40}], ['India → US origin', {rtt:220}], ['Same city', {rtt:8}]].map(([t, p]) => ui.button(t, () => { rtt.set(p.rtt); set('rtt', p.rtt); }, 'sm ghost')));
+    const presets = el('div', {class:'pill-row', style:{marginTop:'10px'}}, ...[['Same city', {rtt:8}], ['Across India', {rtt:40}], ['India → US server', {rtt:220}]].map(([t, p]) => ui.button(t, () => { rtt.set(p.rtt); set('rtt', p.rtt); }, 'sm ghost')));
     host.append(el('div', {class:'ctl-grid'}, rtt.el, dns.el, proto.el, cache.el), el('div', {style:{marginTop:'12px'}}, reuse.el), presets, dgHost, el('div', {class:'panel', style:{marginTop:'14px'}}, wf), el('div', {style:{height:'12px'}}), met.el);
     update(true);
   }
@@ -81,8 +81,8 @@ SDA.register({kind:'playground', id:'request-journey', module:'foundations', ico
 /* ---------------- #21 Latency numbers, log scale ---------------- */
 try {
 SDA.register({kind:'playground', id:'latency-chart', module:'foundations', icon:'⏱️', title:'Latency numbers on a log scale',
-  summary:'From L1 cache to intercontinental round trips — nine orders of magnitude on one chart. Switch to “human time” and compare any two operations.',
-  explain:`<ul><li>Each grid step is <b>10×</b>. Memory → SSD → network round trip → another continent are each roughly 2–3 orders of magnitude apart.</li><li>Turn on <b>human time</b> (1 ns = 1 s) to feel the gaps: an SSD read is a day-trip; a transatlantic round trip is years.</li><li>Values are <b>approximate ranges</b> for modern hardware; your machines will differ by 2–10×. The ratios are what matter.</li></ul>`,
+  summary:'See how far apart common computer actions are, from a CPU cache to a trip across the world. Switch to human time to feel the gaps.',
+  explain:`<h3>How to use it</h3><ol><li>Keep all four groups on and read the chart from top to bottom. Each grid line is 10 times bigger than the one before.</li><li>Use the two menus to compare <b>Main memory reference</b> with <b>SSD random 4 KB read</b>.</li><li>Turn on <b>Human time</b>. One nanosecond becomes one second.</li></ol><h3>What to notice</h3><ul><li>A round trip to another region is thousands of times slower than reading memory.</li><li>The exact values change with hardware. The ratios stay about the same.</li></ul><div class="callout tip"><b>Important point</b><p>Fix the biggest gap first. One extra network trip costs more than thousands of memory reads.</p></div>`,
   real:[{co:'Google', tier:'confirmed', text:'Jeff Dean popularised this list to teach engineers to reason about designs before building them.', src:'Jeff Dean, LADIS 2009 keynote'}, {co:'Jakob Nielsen', tier:'confirmed', text:'Response-time limits: ~0.1 s feels instantaneous, ~1 s keeps the user’s flow of thought, ~10 s is the limit of attention.', src:'Nielsen Norman Group, “Response Times: The 3 Important Limits”'}],
   mount(host){
     const ITEMS = [['L1 cache reference', 1, 'cpu', '~0.5–1 ns'], ['Branch mispredict', 3, 'cpu', '~3 ns'], ['L2 cache reference', 4, 'cpu', '~4 ns'], ['Mutex lock/unlock', 17, 'cpu', '~17–25 ns'], ['Main memory reference', 100, 'cpu', '~100 ns'], ['Compress 1 KB (Snappy)', 2e3, 'cpu', '~2–3 µs'], ['Send 1 KB over 1 Gbps', 1e4, 'net', '~8–10 µs of wire time'], ['Read 1 MB sequentially from RAM', 5e4, 'cpu', '~20–100 µs (memory bandwidth)'], ['SSD random 4 KB read', 1e5, 'disk', '~10–150 µs (NVMe is faster)'], ['Round trip inside a datacenter', 5e5, 'net', '~0.1–0.5 ms'], ['Read 1 MB sequentially from SSD', 1e6, 'disk', '~0.3–2 ms'], ['Round trip between zones in a region', 1.5e6, 'net', '~1–2 ms'], ['Read 1 MB sequentially from HDD', 7e6, 'disk', '~5–10 ms'], ['HDD seek', 1e7, 'disk', '~2–10 ms'], ['Mumbai ↔ Delhi round trip', 3e7, 'net', '~25–40 ms typical; physics floor ≈ 12 ms'], ['TCP + TLS 1.3 setup at 50 ms RTT', 1e8, 'net', '2 round trips before the first request'], ['Feels instant to a human', 1e8, 'human', '~100 ms'], ['California ↔ Netherlands round trip', 1.5e8, 'net', '~150 ms'], ['India ↔ US East round trip', 2e8, 'net', '~180–250 ms; physics floor ≈ 125 ms'], ['Keeps a user’s flow of thought', 1e9, 'human', '~1 s']];
@@ -117,33 +117,34 @@ SDA.register({kind:'playground', id:'latency-chart', module:'foundations', icon:
 /* ---------------- #19 Back-of-envelope calculator ---------------- */
 try {
 SDA.register({kind:'playground', id:'envelope', module:'foundations', icon:'🧮', title:'Back-of-envelope calculator',
-  summary:'Change users, actions, sizes, retention and peak factor. QPS, storage, bandwidth, cache and server counts update live — with the formulas shown step by step.',
-  explain:`<ul><li>Start from a preset, then change <b>one</b> assumption at a time and watch which outputs move.</li><li>Notice how the <b>peak factor</b> — not the average — decides server count, and how <b>retention × replication</b> dominates storage.</li><li>The verdicts are deliberately rough rules of thumb to show how estimates turn into decisions. Always confirm per-box capacity with a load test.</li></ul><p class="lab-hint">All presets are <b>illustrative estimates</b>, not company-disclosed figures.</p>`,
-  real:[{co:'NPCI (UPI)', tier:'confirmed', text:'Publishes monthly UPI volumes — use them to sanity-check the UPI preset.', src:'npci.org.in UPI statistics'}, {co:'Twitter', tier:'confirmed', text:'Reported ~5,700 Tweets/s on average vs a 143,199 Tweets/s record peak in 2013 — a peak factor of ~25× for one event.', src:'Twitter Engineering (2013)'}],
+  summary:'Change users, actions, sizes and the busy-hour multiplier. Requests per second, storage, bandwidth and servers update live, and each number shows its math.',
+  explain:`<h3>How to use it</h3><ol><li>Click the <b>URL shortener</b> preset. It matches the Module 1 lesson: 20 million visitors, 20 requests each, about 23,000 requests a second at peak.</li><li>Change <b>one</b> slider at a time, such as “Peak ÷ average”.</li><li>Watch which numbers move. Press “Hide math”, then “Next line”, to see the formulas one at a time.</li></ol><h3>What to notice</h3><ul><li>The busy-hour rate, not the average, decides how many servers you need.</li><li>Storage grows with how long you keep data and how many copies you keep.</li><li>The green, yellow and red notes are rough rules of thumb. A load test gives the real answer.</li></ul><div class="callout tip"><b>Important point</b><p>An estimate is a set of guesses written down. Change one guess and every number after it updates.</p></div><p class="lab-hint">All presets are illustrative guesses, not figures from the companies.</p>`,
+  real:[{co:'NPCI (UPI)', tier:'confirmed', text:'Publishes monthly UPI volumes. Use them to sanity-check the UPI preset.', src:'npci.org.in UPI statistics'}, {co:'Twitter', tier:'confirmed', text:'Reported about 5,700 Tweets a second on average and a record of 143,199 a second in 2013. That is a peak of about 25 times the average for one event.', src:'Twitter Engineering (2013)'}],
   mount(host){
-    const P = {dau:7, rpu:20, wpct:0, wsize:2.7, rsize:2.7, years:5, repl:3, peak:5, hot:20, cap:3};
     const PRESETS = {
       'URL shortener':{dau:Math.log10(2e7), rpu:20, wpct:Math.log10(1), wsize:Math.log10(500), rsize:Math.log10(500), years:5, repl:3, peak:5, hot:20, cap:Math.log10(2000)},
       'Photo sharing':{dau:Math.log10(5e8), rpu:50, wpct:Math.log10(.4), wsize:Math.log10(2e6), rsize:Math.log10(2e5), years:10, repl:3, peak:3, hot:10, cap:Math.log10(1000)},
       'Chat app':{dau:Math.log10(5e8), rpu:100, wpct:Math.log10(50), wsize:Math.log10(200), rsize:Math.log10(200), years:.1, repl:3, peak:3, hot:5, cap:Math.log10(5000)},
       'UPI-like payments':{dau:Math.log10(2.5e8), rpu:4, wpct:Math.log10(50), wsize:Math.log10(1000), rsize:Math.log10(1000), years:10, repl:3, peak:3, hot:5, cap:Math.log10(1000)},
-      'Food delivery':{dau:Math.log10(1.5e7), rpu:30, wpct:Math.log10(1), wsize:Math.log10(2000), rsize:Math.log10(2e4), years:5, repl:3, peak:4, hot:20, cap:Math.log10(1000)}
+      'Food delivery':{dau:Math.log10(1.5e7), rpu:30, wpct:Math.log10(1), wsize:Math.log10(2000), rsize:Math.log10(2e4), years:5, repl:3, peak:4, hot:20, cap:Math.log10(1000)},
+      'Exam results day':{dau:Math.log10(2e6), rpu:5, wpct:Math.log10(.1), wsize:Math.log10(500), rsize:Math.log10(5000), years:5, repl:3, peak:20, hot:20, cap:Math.log10(2000)}
     };
+    const P = Object.assign({}, PRESETS['URL shortener']);
     const S = {};
     const mk = (k, o) => { S[k] = ui.slider(Object.assign({value:P[k], onInput:v => { P[k] = v; calc(); }}, o)); return S[k].el; };
     const grid = el('div', {class:'ctl-grid'},
-      mk('dau', {label:'Daily active users', min:3, max:9.3, step:.01, fmt:v => fmtNum(Math.pow(10, v))}),
+      mk('dau', {label:'Daily active users (people who use it each day)', min:3, max:9.3, step:.01, fmt:v => fmtNum(Math.pow(10, v))}),
       mk('rpu', {label:'Requests per user per day', min:1, max:300, step:1, fmt:v => v}),
       mk('wpct', {label:'Share of requests that write', min:-1, max:2, step:.01, fmt:v => +Math.pow(10, v).toFixed(Math.pow(10, v) < 1 ? 2 : 1) + '%'}),
       mk('wsize', {label:'Size of each write', min:1, max:7.5, step:.01, fmt:v => fmtBytes(Math.pow(10, v))}),
       mk('rsize', {label:'Size of each response', min:1, max:6.5, step:.01, fmt:v => fmtBytes(Math.pow(10, v))}),
       mk('years', {label:'Retention', min:.1, max:20, step:.1, fmt:v => v < 1 ? Math.round(v * 365) + ' days' : v + ' years'}),
       mk('repl', {label:'Replication factor', min:1, max:5, step:1, fmt:v => '×' + v}),
-      mk('peak', {label:'Peak ÷ average', min:1, max:30, step:.5, fmt:v => '×' + v}),
-      mk('hot', {label:'Hot data cached (80/20)', min:1, max:60, step:1, fmt:v => v + '%'}),
-      mk('cap', {label:'Requests/s one server handles', min:1.5, max:4.7, step:.01, fmt:v => fmtNum(Math.pow(10, v))}));
+      mk('peak', {label:'Peak ÷ average (busy-hour multiplier)', min:1, max:30, step:.5, fmt:v => '×' + v}),
+      mk('hot', {label:'Share of hot data kept in a cache (Module 4 preview)', min:1, max:60, step:1, fmt:v => v + '%'}),
+      mk('cap', {label:'Requests per second one server handles', min:1.5, max:4.7, step:.01, fmt:v => fmtNum(Math.pow(10, v))}));
     const presets = el('div', {class:'pill-row', style:{marginBottom:'14px'}}, el('span', {class:'muted', style:{fontSize:'13px', alignSelf:'center'}}, 'Presets (illustrative):'), ...Object.keys(PRESETS).map(name => ui.button(name, () => { Object.assign(P, PRESETS[name]); Object.keys(S).forEach(k => S[k].set(P[k])); calc(); }, 'sm ghost')));
-    const met = ui.metrics(null, [{id:'avg', label:'Average QPS'}, {id:'peak', label:'Peak QPS'}, {id:'w', label:'Peak write QPS'}, {id:'r', label:'Peak read QPS'}, {id:'sd', label:'New data / day', fmt:fmtBytes}, {id:'st', label:'Total storage', fmt:fmtBytes}, {id:'bw', label:'Peak egress', fmt:v => fmtBits(v)}, {id:'cache', label:'Cache RAM', fmt:fmtBytes}, {id:'srv', label:'App servers at peak', fmt:v => String(Math.ceil(v))}]);
+    const met = ui.metrics(null, [{id:'avg', label:'Average requests/s'}, {id:'peak', label:'Peak requests/s'}, {id:'w', label:'Peak writes/s'}, {id:'r', label:'Peak reads/s'}, {id:'sd', label:'New data per day', fmt:fmtBytes}, {id:'st', label:'Total storage', fmt:fmtBytes}, {id:'bw', label:'Peak egress', fmt:v => fmtBits(v)}, {id:'cache', label:'Cache RAM', fmt:fmtBytes}, {id:'srv', label:'App servers needed at peak', fmt:v => String(Math.ceil(v))}]);
     const verdicts = el('div', {class:'stack', style:{marginTop:'14px'}});
     const math = el('div', {class:'math', style:{whiteSpace:'normal', marginTop:'14px'}}); let shown = 99;
     const stepCtl = el('div', {class:'controls', style:{marginTop:'8px'}}, ui.button('⏮ Hide math', () => { shown = 0; paintMath(); }, 'sm ghost'), ui.button('⏭ Next line', () => { shown++; paintMath(); }, 'sm'), ui.button('Show all', () => { shown = 99; paintMath(); }, 'sm ghost'));
@@ -156,20 +157,20 @@ SDA.register({kind:'playground', id:'envelope', module:'foundations', icon:'🧮
       met.set('avg', avg); met.set('peak', peak); met.set('w', wq); met.set('r', rq); met.set('sd', sd); met.set('st', st); met.set('bw', bw); met.set('cache', cacheB); met.set('srv', servers);
       lines = [
         `requests/day = ${fmtNum(dau)} users × ${P.rpu} = ${fmtNum(perDay)}`,
-        `average QPS  = ${fmtNum(perDay)} ÷ 86,400 s ≈ ${fmtNum(avg)} req/s`,
-        `peak QPS     = ${fmtNum(avg)} × ${P.peak} ≈ ${fmtNum(peak)} req/s  →  writes ${fmtNum(wq)}/s, reads ${fmtNum(rq)}/s`,
+        `average rate = ${fmtNum(perDay)} ÷ 86,400 s ≈ ${fmtNum(avg)} req/s`,
+        `peak rate    = ${fmtNum(avg)} × ${P.peak} ≈ ${fmtNum(peak)} req/s  →  writes ${fmtNum(wq)}/s, reads ${fmtNum(rq)}/s`,
         `new data/day = ${fmtNum(perDay * w)} writes × ${fmtBytes(ws)} ≈ ${fmtBytes(sd)}`,
-        `storage      = ${fmtBytes(sd)} × 365 × ${P.years} yr × ${P.repl} replicas ≈ ${fmtBytes(st)}  (+ indexes, backups)`,
+        `storage      = ${fmtBytes(sd)} × 365 × ${P.years} yr × ${P.repl} replicas ≈ ${fmtBytes(st)}  (plus indexes and backups)`,
         `peak egress  = ${fmtNum(rq)} reads/s × ${fmtBytes(rs)} × 8 bits ≈ ${fmtBits(bw)}`,
         `cache        = ${P.hot}% of a day’s read bytes ≈ ${fmtBytes(cacheB)}`,
         `app servers  = ${fmtNum(peak)} ÷ (${fmtNum(cap)} req/s × 70% target) ≈ ${Math.ceil(servers)} (min 2 for redundancy)`
       ];
       paintMath();
       const V = [];
-      V.push(wq < 2000 ? ['ok', `Writes (${fmtNum(wq)}/s peak): a single relational primary is plausibly enough — verify with a load test.`] : wq < 20000 ? ['warn', `Writes (${fmtNum(wq)}/s peak): possible on one large, tuned primary, but plan batching and partitioning.`] : ['bad', `Writes (${fmtNum(wq)}/s peak): partition the write path (sharding or a distributed, write-optimised store).`]);
-      V.push(st < 2e12 ? ['ok', `Storage (${fmtBytes(st)}): fits comfortably on one database cluster.`] : st < 5e13 ? ['warn', `Storage (${fmtBytes(st)}): partition data or tier cold data to cheaper storage.`] : ['bad', `Storage (${fmtBytes(st)}): needs distributed/object storage with lifecycle tiering.`]);
-      V.push(cacheB < 6.4e10 ? ['ok', `Cache (${fmtBytes(cacheB)}): fits on a single large cache node (add a replica for availability).`] : cacheB < 1e12 ? ['warn', `Cache (${fmtBytes(cacheB)}): needs a small sharded cache cluster.`] : ['bad', `Cache (${fmtBytes(cacheB)}): too big to cache the whole hot set — cache only the hottest keys, push media to a CDN.`]);
-      V.push(bw < 1e10 ? ['ok', `Egress (${fmtBits(bw)} peak): manageable from your own load balancers.`] : ['warn', `Egress (${fmtBits(bw)} peak): serve static and media bytes from a CDN.`]);
+      V.push(wq < 2000 ? ['ok', `Writes (${fmtNum(wq)}/s at peak): one relational primary can probably handle this. Confirm with a load test.`] : wq < 20000 ? ['warn', `Writes (${fmtNum(wq)}/s at peak): possible on one large, tuned primary, but plan batching and partitioning.`] : ['bad', `Writes (${fmtNum(wq)}/s at peak): split the write path, using sharding or a store built for writes.`]);
+      V.push(st < 2e12 ? ['ok', `Storage (${fmtBytes(st)}): fits on one database cluster.`] : st < 5e13 ? ['warn', `Storage (${fmtBytes(st)}): split the data, or move old data to cheaper storage.`] : ['bad', `Storage (${fmtBytes(st)}): needs distributed or object storage, with old data moved to cheaper tiers.`]);
+      V.push(cacheB < 6.4e10 ? ['ok', `Cache (${fmtBytes(cacheB)}): fits on one large cache machine. Add a copy for availability.`] : cacheB < 1e12 ? ['warn', `Cache (${fmtBytes(cacheB)}): needs a small group of cache machines.`] : ['bad', `Cache (${fmtBytes(cacheB)}): too big to cache everything hot. Cache only the hottest keys and serve media from a CDN.`]);
+      V.push(bw < 1e10 ? ['ok', `Egress (${fmtBits(bw)} at peak): your own load balancers can handle this.`] : ['warn', `Egress (${fmtBits(bw)} at peak): serve images and media from a CDN.`]);
       verdicts.innerHTML = ''; V.forEach(([c, t]) => verdicts.append(el('div', {class:'verdict ' + c}, t)));
     }
     host.append(presets, grid, el('div', {style:{height:'16px'}}), met.el, math, stepCtl, verdicts);
@@ -181,8 +182,8 @@ SDA.register({kind:'playground', id:'envelope', module:'foundations', icon:'🧮
 /* ---------------- #20 Availability nines calculator ---------------- */
 try {
 SDA.register({kind:'playground', id:'nines', module:'foundations', icon:'📈', title:'Availability nines calculator',
-  summary:'Convert nines into downtime, then build a system tier by tier: add replicas, see the composite availability and the weakest link, and simulate a year.',
-  explain:`<ul><li>Each extra nine is <b>10× less downtime</b> — and usually much more than 10× the effort.</li><li>Tiers in <b>series</b> multiply; replicas inside a tier combine in <b>parallel</b>: 1 − (1 − a)ⁿ.</li><li>Find the <b>weakest link</b> (highlighted) — improving any other tier barely helps.</li><li>Turn on “all replicas in one zone”: redundancy collapses because failures are no longer independent.</li></ul><p class="lab-hint">The year simulation samples each replica hourly with its availability as the probability of being up. Real failures cluster and last longer; this is a teaching model.</p>`,
+  summary:'Turn a number of nines into allowed downtime. Then build a system from parts and see how its total availability changes.',
+  explain:`<h3>How to use it</h3><ol><li>Pick <b>99.9%</b> under Availability target and read the downtime per year.</li><li>In the system below, press <b>+</b> on App servers to add a copy. Watch the total change.</li><li>Turn on <b>All replicas share one zone</b> and watch the total drop.</li></ol><h3>What to notice</h3><ul><li>Parts in a chain multiply, so the total is always lower than the weakest part.</li><li>Extra copies help only when they fail independently of each other.</li></ul><div class="callout tip"><b>Important point</b><p>A chain is only as available as its weakest link. Improve that part first.</p></div><p class="lab-hint">The year simulation is a teaching model. Real failures last longer and come in clusters.</p>`,
   real:[{co:'Amazon S3', tier:'confirmed', text:'Designed for 99.99% availability and 11 nines durability; the SLA commits to 99.9%. Three different numbers for three different promises.', src:'AWS S3 documentation and SLA'}, {co:'Microsoft Azure', tier:'confirmed', text:'Azure’s documentation explains composite SLAs: chaining services multiplies their SLAs, and redundancy across regions raises it.', src:'Azure architecture guidance on composite SLAs'}],
   mount(host, api){
     const OPTS = [99, 99.5, 99.9, 99.95, 99.99, 99.999];
@@ -238,7 +239,7 @@ SDA.register({kind:'playground', id:'nines', module:'foundations', icon:'📈', 
         if (!up){ down++; days[Math.floor(hr / 24)]++; }
       }
       year.innerHTML = ''; days.forEach((x, i) => year.append(el('span', {title:`Day ${i + 1}: ${x} h down`, style:{height:'10px', borderRadius:'2px', background:x ? `color-mix(in srgb, var(--bad) ${Math.min(100, 35 + x * 20)}%, transparent)` : 'var(--surface-3)'}})));
-      const {A} = compute(); yearInfo.textContent = `Simulated: ${down} hours down on ${days.filter(Boolean).length} days. Expected ≈ ${((1 - A) * 8760).toFixed(1)} h. Run it again — randomness matters.`;
+      const {A} = compute(); yearInfo.textContent = `Simulated: ${down} hours down on ${days.filter(Boolean).length} days. Expected ≈ ${((1 - A) * 8760).toFixed(1)} h. Run it again. The result changes a little each time because it is random.`;
     }
     const zone = ui.toggle({label:'All replicas share one zone (zone availability 99.9%)', checked:false, onChange:v => { oneZone = v; render(true); }});
     host.append(el('h3', {style:{margin:'0 0 8px'}}, '① Nines → downtime'), el('div', {class:'ctl-grid'}, aSel.el, aIn), aOut,
@@ -252,8 +253,8 @@ SDA.register({kind:'playground', id:'nines', module:'foundations', icon:'📈', 
 /* ---------------- Tail latency + fan-out simulator ---------------- */
 try {
 SDA.register({kind:'playground', id:'tail-latency', module:'foundations', icon:'🐢', title:'Tail latency & fan-out simulator',
-  summary:'Thousands of simulated requests. Each user request fans out to N backends and waits for the slowest. Watch p99 explode — then tame it with hedged requests.',
-  explain:`<ul><li>At fan-out 1 the user sees the backend’s own distribution. Raise fan-out to 50–100 and the <b>user’s median</b> moves toward the <b>backend’s p99</b>.</li><li>Compare the measured “hit ≥ 1 slow backend” with the formula 1 − 0.99ᴺ.</li><li>Turn on <b>hedged requests</b> (backup after the backend’s p95): the tail shrinks dramatically for a few percent of extra load. Only do this for idempotent reads.</li><li>Increase the hiccup rate (GC pauses, noisy neighbours) to see how rare events dominate large fan-outs.</li></ul><p class="lab-hint">Backend latency model: log-normal around a 20 ms median plus occasional 150–400 ms hiccups.</p>`,
+  summary:'Simulate thousands of requests where one page makes many backend calls and waits for the slowest one. Then add backup requests to cut the slow tail.',
+  explain:`<h3>How to use it</h3><ol><li>Set <b>Fan-out</b> to 1 and note the user p99.</li><li>Raise Fan-out to 100. The typical user time moves up toward the backend's slow time.</li><li>Turn on <b>Hedged requests</b>. A backup copy of each slow call is sent, and the tail shrinks.</li></ol><h3>What to notice</h3><ul><li>If 1 call in 100 is slow, then at fan-out 100 about 63% of users hit a slow call (1 − 0.99<sup>100</sup>).</li><li>Hedging adds only a few percent of extra load.</li></ul><div class="callout tip"><b>Important point</b><p>The more calls a page makes, the more likely it waits for one slow call. Hedge only safe, repeatable reads.</p></div>`,
   real:[{co:'Google', tier:'confirmed', text:'“The Tail at Scale” reports hedging after a 10 ms delay cut 99.9th-percentile latency for a 1,000-key read across 100 servers from 1,800 ms to 74 ms with ~2% more requests.', src:'Dean & Barroso, CACM 2013'}],
   mount(host, api){
     const P = {k:20, sigma:.45, hic:1, hedge:false};

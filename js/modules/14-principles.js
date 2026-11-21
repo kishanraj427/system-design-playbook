@@ -8,7 +8,7 @@ const {sortGame, orderGame} = SDA.m1helpers; const {frag} = SDA.ph;
 
 /* ---------- widgets ---------- */
 function rightSizer(host){
-  const P = {rps:300, eng:6, dataGB:50, money:true, spiky:false, global:false, realtime:false, search:false};
+  const P = {rps:50, eng:3, dataGB:20, money:true, spiky:false, global:false, realtime:false, search:false};
   const out = el('div');
   function run(){
     const need = [], notYet = [];
@@ -16,14 +16,14 @@ function rightSizer(host){
     need.push(['Managed relational DB (Postgres/MySQL) + read replica', P.dataGB < 2000 ? `${fmtNum(P.dataGB)} GB fits comfortably in one primary; transactions and joins for free.` : 'Large data: plan partitioning/sharding for the biggest tables.']);
     need.push(['Load balancer + 2–3 stateless app instances across AZs', 'Redundancy and zero-downtime deploys from day one.']);
     if (P.rps > 1500 || P.spiky) need.push(['Cache (Redis) for hot reads', P.spiky ? 'Spiky traffic: absorb read bursts.' : `${fmtNum(P.rps)} req/s: keep hot reads off the DB.`]); else notYet.push(['Distributed cache', `${fmtNum(P.rps)} req/s is easily served by the DB with indexes; add Redis when profiling shows hot reads.`]);
-    need.push(['Background job queue', 'Emails, receipts, image processing off the request path (a DB-backed queue or SQS is enough).']);
+    need.push(['Background job queue', 'Receipts and emails off the request path (a DB-backed queue or SQS is enough).']);
     if (P.rps > 20000) need.push(['Event streaming (Kafka) + more service boundaries', 'High volume and many consumers justify a log.']); else notYet.push(['Kafka / event streaming', 'A simple queue covers async work until you have many independent consumers or replay needs.']);
     if (P.dataGB > 5000 || P.rps > 50000) need.push(['Sharding / distributed DB', 'Single-primary write limits or data size are in sight.']); else notYet.push(['Sharding / NoSQL migration', 'A single well-indexed primary handles this; vertical scaling + replicas first.']);
     if (P.eng > 25) need.push(['Microservices per bounded context + platform team', 'Team scale is the main reason to split.']); else notYet.push(['Microservices + service mesh', `With ${P.eng} engineers, network calls, distributed transactions and on-call overhead cost more than they save.`]);
     if (P.global) need.push(['CDN + multi-region read replicas', 'Global users need edge caching; full multi-region writes only if required.']); else notYet.push(['Multi-region active-active', 'Multi-AZ in one region meets most availability targets.']);
     if (P.realtime) need.push(['WebSocket/SSE gateway', 'Live updates need a connection tier.']);
     if (P.search) need.push(['Search index (Postgres full-text first, Elasticsearch/OpenSearch when needed)', 'Start with the DB’s full-text search; move when relevance or scale demands.']);
-    if (P.money) need.push(['Idempotency keys + transactional outbox', 'Money movement must be exactly-once in effect.']);
+    if (P.money) need.push(['Idempotency keys + transactional outbox', 'Ride payments must be exactly-once in effect.']);
     out.innerHTML = '';
     out.append(el('div', {class:'grid c2'}, el('div', {class:'card'}, el('b', null, '✅ Build now'), frag(h.list(need.map(([a, b]) => `<b>${a}</b>: ${b}`)))), el('div', {class:'card'}, el('b', null, '⏳ Not yet (YAGNI)'), frag(h.list(notYet.map(([a, b]) => `<b>${a}</b>: ${b}`))))));
   }
@@ -31,49 +31,49 @@ function rightSizer(host){
     ui.slider({label:'Peak requests per second', min:10, max:200000, step:10, value:P.rps, fmt:v => fmtNum(v), onInput:v => { P.rps = v; run(); }}).el,
     ui.slider({label:'Engineers', min:1, max:300, value:P.eng, fmt:v => String(v), onInput:v => { P.eng = v; run(); }}).el,
     ui.slider({label:'Data size', min:1, max:50000, step:1, value:P.dataGB, fmt:v => fmtNum(v) + ' GB', onInput:v => { P.dataGB = v; run(); }}).el),
-    el('div', {class:'controls', style:{margin:'8px 0'}}, ui.toggle({label:'Handles money', checked:true, onChange:v => { P.money = v; run(); }}).el, ui.toggle({label:'Spiky traffic (sales, events)', checked:false, onChange:v => { P.spiky = v; run(); }}).el, ui.toggle({label:'Global users', checked:false, onChange:v => { P.global = v; run(); }}).el, ui.toggle({label:'Live updates', checked:false, onChange:v => { P.realtime = v; run(); }}).el, ui.toggle({label:'Search', checked:false, onChange:v => { P.search = v; run(); }}).el), out,
-    el('p', {class:'lab-hint'}, 'A rule-of-thumb guide, not a law. Thresholds are illustrative; measure your own system before adding complexity.'));
+    el('div', {class:'controls', style:{margin:'8px 0'}}, ui.toggle({label:'Handles money', checked:true, onChange:v => { P.money = v; run(); }}).el, ui.toggle({label:'Spiky traffic (rainy-day rush, events)', checked:false, onChange:v => { P.spiky = v; run(); }}).el, ui.toggle({label:'Global users', checked:false, onChange:v => { P.global = v; run(); }}).el, ui.toggle({label:'Live updates', checked:false, onChange:v => { P.realtime = v; run(); }}).el, ui.toggle({label:'Search', checked:false, onChange:v => { P.search = v; run(); }}).el), out,
+    el('p', {class:'lab-hint'}, 'A rule-of-thumb guide, not a law. Thresholds are illustrative. Measure your own system before adding complexity.'));
   run();
 }
 function patternExplorer(host){
   const PAT = [
     {id:'observer', label:'Observer → pub/sub', code:`// In code: subjects notify registered observers
-class OrderEvents {
-  private subs: Array<(o: Order) => void> = [];
-  subscribe(fn: (o: Order) => void) { this.subs.push(fn); }
-  placed(o: Order) { this.subs.forEach(fn => fn(o)); }   // publisher doesn't know who listens
+class RideEvents {
+  private subs: Array<(r: Ride) => void> = [];
+  subscribe(fn: (r: Ride) => void) { this.subs.push(fn); }
+  ended(r: Ride) { this.subs.forEach(fn => fn(r)); }   // publisher doesn't know who listens
 }
 events.subscribe(sendReceiptEmail);
-events.subscribe(updateLoyaltyPoints);`, sys:'At system scale the same idea is <b>pub/sub and event-driven architecture</b>: Ordering publishes <code>OrderPlaced</code> to Kafka/SNS; billing, loyalty and analytics subscribe independently. Gains: decoupling and independent scaling. Costs: eventual consistency, harder tracing, duplicate delivery (consumers must be idempotent).'},
+events.subscribe(updateRiderPoints);`, sys:'At system scale the same idea is <b>pub/sub and event-driven architecture</b>: Rides publishes <code>RideEnded</code> to Kafka/SNS, and receipts, points and analytics subscribe independently. Gains: decoupling and independent scaling. Costs: eventual consistency, harder tracing, duplicate delivery (consumers must be idempotent).'},
     {id:'strategy', label:'Strategy → pluggable policies', code:`// In code: swap an algorithm behind one interface
-interface PickServer { pick(servers: Server[], req: Request): Server; }
-class RoundRobin implements PickServer { private i = 0; pick(s: Server[]) { return s[this.i++ % s.length]; } }
-class LeastConnections implements PickServer { pick(s: Server[]) { return s.reduce((a, b) => b.active < a.active ? b : a); } }
-const lb = new LoadBalancer(config.policy === 'least' ? new LeastConnections() : new RoundRobin());`, sys:'At system scale: <b>configurable policies</b>, such as load-balancing algorithms (round robin, least request, ring hash), cache eviction (LRU/LFU), retry policies, and ABR algorithms in video players. Behaviour changes by config, not code changes.'},
+interface PricingRule { fare(ride: Ride): number; }
+class PerMinute implements PricingRule { fare(r: Ride) { return r.minutes * 2; } }
+class DayPass implements PricingRule { fare(r: Ride) { return 0; } }
+const pricing = config.city === 'pune' ? new DayPass() : new PerMinute();`, sys:'At system scale: <b>configurable policies</b>, such as load-balancing algorithms (round robin, least request, ring hash), cache eviction (LRU/LFU), retry policies, and ABR algorithms in video players. Behaviour changes by config, not code changes.'},
     {id:'factory', label:'Factory → provisioning by config', code:`// In code: create the right implementation from configuration
-function storageFor(cfg: { kind: 's3' | 'gcs' | 'local'; bucket: string }): BlobStore {
+function paymentFor(cfg: { kind: 'stripe' | 'razorpay' | 'fake'; key: string }): PaymentGateway {
   switch (cfg.kind) {
-    case 's3':    return new S3Store(cfg.bucket);
-    case 'gcs':   return new GcsStore(cfg.bucket);
-    case 'local': return new LocalDiskStore('/tmp/' + cfg.bucket);   // dev & tests
+    case 'stripe':   return new StripeGateway(cfg.key);
+    case 'razorpay': return new RazorpayGateway(cfg.key);
+    case 'fake':     return new FakeGateway();   // dev & tests
   }
 }`, sys:'At system scale: <b>templates and platform “golden paths”</b>, such as an IaC module or service template that stamps out a standard service (load balancer, autoscaling, dashboards, alerts) from a few parameters, and tenant provisioning that creates a pooled or siloed stack depending on plan.'},
     {id:'breaker', label:'Circuit breaker → resilience layer', code:`// In code: wrap a dependency call
 const breaker = new CircuitBreaker(callPaymentGateway, { failureRate: 50, minCalls: 20, openMs: 10_000 });
-try { return await breaker.fire(order); }
+try { return await breaker.fire(ride); }
 catch (e) { if (e instanceof BreakerOpenError) return { status: 'PENDING', retryLater: true }; throw e; }`, sys:'At system scale: <b>service-mesh circuit breaking and outlier ejection</b> (Envoy), bulkheads per dependency, and region-level traffic shifting. They are the same state machine applied to hosts, clusters and regions.'},
     {id:'repository', label:'Repository → data ownership', code:`// In code: the domain talks to an interface, not to SQL
-interface OrderRepository { byId(id: string): Promise<Order | null>; save(o: Order): Promise<void>; }
-class PgOrderRepository implements OrderRepository {
-  async byId(id: string) { const r = await db.query('SELECT * FROM orders WHERE id = $1', [id]); return r.rows[0] ? toOrder(r.rows[0]) : null; }
-  async save(o: Order) { /* INSERT … ON CONFLICT … */ }
+interface RideRepository { byId(id: string): Promise<Ride | null>; save(r: Ride): Promise<void>; }
+class PgRideRepository implements RideRepository {
+  async byId(id: string) { const r = await db.query('SELECT * FROM rides WHERE id = $1', [id]); return r.rows[0] ? toRide(r.rows[0]) : null; }
+  async save(r: Ride) { /* INSERT … ON CONFLICT … */ }
 }`, sys:'At system scale: <b>one service owns each dataset</b> and exposes it through an API or events, never through shared tables. It also enables the strangler-fig and database migrations: swap the implementation behind the repository without touching domain logic.'}];
   const list = PAT.map(p => ({id:p.id, label:p.label, render:panel => { panel.append(frag(h.code('ts', p.code, p.label.split(' →')[0] + '.ts')), frag(h.callout('info', '🏗 At system scale', p.sys))); }}));
   ui.tabs(host, list, {initial:'observer'});
 }
 function tradeoffMatrix(host){
-  const OPTS = ['Postgres (sharded later)', 'Cassandra', 'DynamoDB'];
-  const CRIT = [{id:'cons', label:'Strong consistency / transactions', w:2, s:[5, 2, 3]}, {id:'write', label:'Write throughput at scale', w:5, s:[3, 5, 5]}, {id:'ops', label:'Low operational burden', w:2, s:[3, 2, 5]}, {id:'query', label:'Flexible queries / joins', w:1, s:[5, 1, 2]}, {id:'cost', label:'Cost predictability', w:1, s:[4, 4, 2]}, {id:'lock', label:'Avoid vendor lock-in', w:1, s:[5, 5, 1]}];
+  const OPTS = ['Postgres', 'Redis', 'DynamoDB'];
+  const CRIT = [{id:'write', label:'Handles 4,000 writes a second', w:4, s:[3, 5, 4]}, {id:'read', label:'Fast “bikes near me” map reads', w:4, s:[3, 5, 2]}, {id:'dur', label:'Keeps data if a machine fails', w:2, s:[5, 2, 5]}, {id:'ops', label:'Low operational burden', w:2, s:[3, 3, 5]}, {id:'query', label:'Flexible queries (history, reports)', w:1, s:[5, 1, 2]}, {id:'cost', label:'Low cost at this size', w:1, s:[4, 2, 3]}];
   const out = el('div');
   function scores(){ return OPTS.map((_, i) => CRIT.reduce((a, c) => a + c.w * c.s[i], 0)); }
   function run(){
@@ -84,7 +84,7 @@ function tradeoffMatrix(host){
     CRIT.forEach(c => { for (const d of [1, 2, -1, -2]){ const w0 = c.w, w1 = clamp(w0 + d, 0, 5); if (w1 === w0) continue; c.w = w1; const s2 = scores(); const b2 = s2.indexOf(Math.max(...s2)); c.w = w0; if (b2 !== best){ flips.push(`${w1 > w0 ? 'raising' : 'lowering'} “${c.label}” to ×${w1} makes <b>${OPTS[b2]}</b> win`); break; } } });
     out.append(el('div', {class:'verdict ' + (flips.length ? 'warn' : 'ok'), html:flips.length ? `Sensitivity: the decision is fragile. ${flips.slice(0, 3).join('; ')}. Say this out loud in a design review: it shows which assumption matters.` : 'Robust: no single ±2 weight change flips the winner.'}));
   }
-  host.append(el('p', {class:'lab-hint'}, 'Scenario: the message store for a chat app with 50K writes/s growing fast. Drag the weights to match YOUR requirements; scores are illustrative judgements on a 1–5 scale.'),
+  host.append(el('p', {class:'lab-hint'}, 'Scenario: where the bike app stores live bike locations (20,000 bikes, a location every 5 seconds). Drag the weights to match your own needs. Scores are illustrative judgements on a 1–5 scale.'),
     el('div', {class:'ctl-grid'}, ...CRIT.map(c => ui.slider({label:c.label, min:0, max:5, value:c.w, fmt:v => '×' + v, onInput:v => { c.w = v; run(); }}).el)), out);
   run();
 }
@@ -93,120 +93,163 @@ function tradeoffMatrix(host){
 const lessons = [
 {
   id:'solid', title:'SOLID, from classes to services', minutes:11, tags:['SOLID','single responsibility','open/closed','Liskov','interface segregation','dependency inversion'],
-  summary:'The five SOLID principles keep code changeable, and each has a system-design twin: single-purpose services, extension points, substitutable implementations, small focused APIs, and depending on contracts rather than concrete systems.',
-  problem:`<p>Your <code>OrderService</code> class is 4,000 lines: it prices orders, charges cards, sends SMS, writes analytics and talks directly to Postgres and a payment SDK. Every change risks breaking something unrelated, tests need a real database, and switching SMS vendors touches 40 files. The same shape appears at system scale: a “god service” every team must change.</p>`,
-  intuition:`A well-run kitchen. Each cook has one station (single responsibility). New dishes are added without rebuilding the stove (open/closed). Any trained cook can cover a station (Liskov). The order slip shows each station only what it needs (interface segregation). Cooks follow the recipe card, not a particular supplier’s packaging (dependency inversion).`,
+  summary:'SOLID is five habits that keep code easy to change. Each one has a system-scale twin: single-purpose services, extension points, honest contracts, small APIs and depending on contracts instead of internals.',
+  problem:`<h3>A small example</h3><p>A bike-sharing app has one <code>RideService</code> class. It prices rides, charges cards, sends SMS and writes to the database.</p><ul><li>The class is 4,000 lines long.</li><li>Tests need a real database.</li><li>Changing the SMS vendor touches 40 files.</li></ul><p>A new city wants a different price rule. How can we add it without breaking the rest?</p>`,
   how:{
+    intro:'<h3>What happens behind the scenes</h3><p>We fix <code>RideService</code> one principle at a time. The five letters spell SOLID.</p>',
+    steps:[
+      {icon:'🧩', title:'S: one job per part', text:'Pricing, payment and SMS become separate parts. A change to SMS cannot break pricing.'},
+      {icon:'➕', title:'O: add, do not edit', text:'A new city rule is a new class. The old code stays closed to edits but open to additions.'},
+      {icon:'🔁', title:'L: honest substitutes', text:'A second payment provider must behave like the first, including how it reports errors. Then callers need no special cases.'},
+      {icon:'✂️', title:'I: small contracts', text:'The rider app needs the bike’s price and status, not 90 fields. Give each client a small contract.'},
+      {icon:'🔌', title:'D: depend on contracts', text:'Ride logic talks to a “payment contract”, not to one vendor’s SDK. Vendors plug in behind it.'}
+    ],
     stepper:{title:'Five principles, two scales', items:[
-      {title:'S: Single responsibility', tag:'one reason to change', text:'<b>Code:</b> a module should have one reason to change (pricing ≠ notifications). <b>System:</b> a service owns one business capability and its data (bounded context), so one team can change it alone.'},
-      {title:'O: Open/closed', tag:'extend, don’t edit', text:'<b>Code:</b> add new behaviour by adding code (a new payment method class), not editing a giant switch. <b>System:</b> extension points such as events others subscribe to, plugins, webhooks and feature flags let new features attach without changing the core.'},
-      {title:'L: Liskov substitution', tag:'honest contracts', text:'<b>Code:</b> a subtype must work wherever its parent is expected (a “read-only” list that throws on add breaks callers). <b>System:</b> a new implementation behind an API (a v2 service, a different DB adapter) must honour the same contract, including errors, idempotency and latency expectations.'},
-      {title:'I: Interface segregation', tag:'small APIs', text:'<b>Code:</b> many small interfaces beat one fat one. <b>System:</b> focused APIs per consumer (BFFs, GraphQL fields, separate read/write endpoints) so clients don’t depend on things they don’t use, and changes don’t ripple.'},
-      {title:'D: Dependency inversion', tag:'depend on contracts', text:'<b>Code:</b> high-level policy depends on abstractions (ports), and details implement them (adapters). <b>System:</b> services depend on contracts (API schemas, event schemas), not on another team’s database or internals: hexagonal architecture at service scale.'}]},
-    html:h.code('ts', `// Before: one class does everything, hard-wired to vendors
-class OrderService {
-  async place(o) { const total = /* pricing */; await stripe.charge(o.card, total); await twilio.sms(o.phone, 'Placed!'); await pg.query('INSERT …'); }
+      {title:'S: Single responsibility', tag:'one reason to change', text:'<b>Code:</b> a part has one reason to change, so pricing and SMS live apart. <b>System:</b> a service owns one business capability and its data, such as Rides or Payments, so one team can change it alone.'},
+      {title:'O: Open/closed', tag:'extend, don’t edit', text:'<b>Code:</b> a new city price rule is a new class, not another branch in a giant if-else. <b>System:</b> events, plugins and webhooks let new features attach without changing the core.'},
+      {title:'L: Liskov substitution', tag:'honest contracts', text:'<b>Code:</b> a new payment class must work wherever the old one worked. <b>System:</b> a v2 service behind an API must keep the same errors, retries and speed promises.'},
+      {title:'I: Interface segregation', tag:'small APIs', text:'<b>Code:</b> many small interfaces beat one fat one. <b>System:</b> the rider app, the repair crew app and the admin site each get a focused API, so a change for one does not ripple to the others.'},
+      {title:'D: Dependency inversion', tag:'depend on contracts', text:'<b>Code:</b> ride logic depends on a payment contract, and each vendor implements it. <b>System:</b> services depend on API and event contracts, not on another team’s database.'}]},
+    html:`<h3>Everyday comparison</h3><p>Think of a bike repair shop.</p><div class="simple-table">${h.table(['Repair shop', 'In the app'], [['One mechanic per job: tyres, brakes, paint', 'One part per job.'], ['A new tool is added to the wall, the shop is not rebuilt', 'A new rule is added as new code.'], ['Any trained mechanic can fix a flat tyre', 'Any payment class works in the same place.']])}</div><div class="callout tip"><b>Important point</b><p>All five ask one thing: when a change comes, how many places must we touch? Fewer is better.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Change that keeps coming', 'Principle that helps'], [['New city price rules', 'O: add a class.'], ['Switching SMS or payment vendor', 'D: plug in behind a contract.'], ['One team blocked by another team’s code', 'S: split by job and owner.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Today a change of SMS vendor touches 40 files. After the split, ride logic calls one SMS contract. A vendor change means 1 new adapter file and 1 changed line that picks it. That is 2 places, not 40.</p><p>For price rules, say 3 cities have 3 rule classes. A 4th city adds 1 new file and edits 0 old ones. With an if-else chain, it edits the one function all 4 cities share, so all 4 need retesting.</p><h4>When it goes wrong</h4><p>A substitute must keep the promises, not only the method names. Say provider A returns "declined" as a normal answer. A new provider B throws an error instead. Ride code written for A now crashes on B. The same happens between services. If v1 answers in 50 ms and v2 in 200 ms, a caller with a 100 ms timeout breaks. You will learn timeouts in Module 9.</p><h4>How it works inside</h4><p>The rider app needs 2 of the 90 fields. That leaves 88 ÷ 90, about 98%, it never reads. If it depends on all 90, it can break when any of those 88 change.</p><h4>In code</h4><p>Here is the same ride flow before and after the split. Ride logic knows only contracts, and vendors plug in from outside.</p>${h.code('ts', `// Before: one class does everything, hard-wired to vendors
+class RideService {
+  async endRide(r) { const fare = /* pricing */; await stripe.charge(r.card, fare); await twilio.sms(r.phone, 'Ride ended'); await pg.query('INSERT …'); }
 }
 
 // After: single responsibilities + dependency inversion (ports) + open for extension
-interface PaymentGateway { charge(orderId: string, paise: number): Promise<'ok' | 'declined'>; }
-interface Notifier { orderPlaced(o: Order): Promise<void>; }
-class PlaceOrder {
-  constructor(private pricing: Pricing, private pay: PaymentGateway, private repo: OrderRepository, private events: EventBus) {}
-  async run(cmd: PlaceOrderCmd) {
-    const order = Order.create(cmd, this.pricing.total(cmd));
-    order.markPaid(await this.pay.charge(order.id, order.totalPaise) === 'ok');
-    await this.repo.save(order);
-    await this.events.publish('OrderPlaced', order);   // SMS, analytics etc. subscribe: open for extension
+interface PaymentGateway { charge(rideId: string, paise: number): Promise<'ok' | 'declined'>; }
+interface PricingRule { fare(ride: Ride): number; }          // one class per city or pass
+class EndRide {
+  constructor(private pricing: PricingRule, private pay: PaymentGateway, private repo: RideRepository, private events: EventBus) {}
+  async run(cmd: EndRideCmd) {
+    const ride = Ride.finish(cmd, this.pricing.fare(cmd.ride));
+    ride.markPaid(await this.pay.charge(ride.id, ride.farePaise) === 'ok');
+    await this.repo.save(ride);
+    await this.events.publish('RideEnded', ride);   // SMS, points and analytics subscribe: open for extension
   }
-}`, 'solid.ts'),
-    deep:`<p><b>Use SOLID as a lens, not a law.</b> Taken too far it produces interfaces with one implementation, factories for everything and code that is hard to follow. Apply it where change actually happens: vendor integrations, business rules that vary by country or tenant, and boundaries between teams.</p><p><b>Coupling and cohesion</b> are the measurable ideas underneath. High cohesion (things that change together live together) and low coupling (few, stable dependencies) matter at every scale: functions, modules, services, teams. A change that requires coordinated deploys of five services means your boundaries are wrong, however “SOLID” each one looks.</p>`
+}`, 'solid.ts')}`
   },
-  tradeoffs:{use:[`Code and services that change often or have several implementations (payment providers, notifications, pricing rules)`], avoid:[`Abstractions with a single implementation and no test need`, `Splitting a cohesive module just to “follow S”`], alt:[`Simple, direct code for stable, small parts`, `Refactor toward SOLID when the second variation actually appears`]},
+  tradeoffs:{use:[`Parts that change often or have several versions, such as city price rules, payment providers and SMS vendors.`], avoid:[`An interface with only one implementation and no test need.`, `Splitting a small, cohesive module just to follow “S”.`], alt:[`Plain, direct code for stable parts, such as the bike unlock code.`, `Refactor toward SOLID when the second variation really appears.`]},
   real:[
-    {co:'Robert C. Martin', tier:'confirmed', text:'Martin collected these principles in “Design Principles and Design Patterns” (2000); Michael Feathers later coined the SOLID acronym. Liskov substitution comes from Barbara Liskov’s 1987 keynote on data abstraction.', src:'Martin, Design Principles and Design Patterns (2000); Liskov, “Data Abstraction and Hierarchy” (1987)'},
-    {co:'Shopify', tier:'confirmed', text:'Shopify kept a large Rails monolith but enforced component boundaries and public interfaces between components (a modular monolith), applying these principles at the module level instead of splitting everything into services.', src:'Shopify Engineering, “Deconstructing the Monolith” (2019)'},
-    {co:'Payment provider swap', tier:'educational', text:'With a PaymentGateway port, adding a second provider for failover is a new adapter plus routing config; order logic doesn’t change.', src:'Simplified educational design'}
+    {co:'Robert C. Martin', tier:'confirmed', text:'Martin collected these principles in “Design Principles and Design Patterns” (2000). Michael Feathers later coined the SOLID acronym. Liskov substitution comes from Barbara Liskov’s 1987 keynote.', src:'Martin, Design Principles and Design Patterns (2000); Liskov, “Data Abstraction and Hierarchy” (1987)'},
+    {co:'Shopify', tier:'confirmed', text:'Shopify kept a large Rails monolith but enforced component boundaries and public interfaces between components. That applies these ideas at the module level instead of splitting everything into services.', src:'Shopify Engineering, “Deconstructing the Monolith” (2019)'}
   ],
-  mistakes:[`God classes and god services`, `Services reading each other’s tables (violates dependency inversion at system scale)`, `Interface explosion before any second implementation exists`],
-  interview:[`When discussing service boundaries, mention single responsibility (bounded contexts) and depending on contracts (APIs/events), not shared databases`],
-  tryit:{note:'Which principle does each smell violate?', mount:host => sortGame(host, [
-    {t:'The Invoice service also sends marketing emails', c:'s', why:'Two reasons to change.'},
-    {t:'Adding UPI means editing a 300-line switch in checkout', c:'o', why:'Not open for extension.'},
-    {t:'A “cached” repository silently returns stale data where callers expect fresh reads', c:'l', why:'Breaks the contract callers rely on.'},
-    {t:'Mobile app must call a 90-field user endpoint to show a name', c:'i', why:'Clients depend on things they don’t use.'},
-    {t:'Reporting service queries the Orders team’s database tables directly', c:'d', why:'Depends on a concrete internal, not a contract.'}
-  ], [{id:'s', label:'S'}, {id:'o', label:'O'}, {id:'l', label:'L'}, {id:'i', label:'I'}, {id:'d', label:'D'}])},
+  mistakes:[`Building a god class or a god service that every team must change.`, `Letting one service read another service’s tables, which breaks “D” at system scale.`, `Adding interfaces before a second implementation exists.`],
+  interview:[`When you draw service boundaries, say “one capability and its data per service, and services talk through contracts, not shared tables”.`],
+  tryit:[
+    {note:'Which principle does each smell break?', mount:host => sortGame(host, [
+      {t:'The Billing service also sends marketing emails', c:'s', why:'Two reasons to change.'},
+      {t:'Adding a new city means editing a 300-line if-else in pricing', c:'o', why:'Not open for extension.'},
+      {t:'A “cached” bike repository silently returns old locations where callers expect fresh ones', c:'l', why:'It breaks the promise callers rely on.'},
+      {t:'The rider app must call a 90-field bike endpoint just to show a battery level', c:'i', why:'Clients depend on things they do not use.'},
+      {t:'The Reports service queries the Rides team’s database tables directly', c:'d', why:'It depends on an internal detail, not a contract.'}
+    ], [{id:'s', label:'S'}, {id:'o', label:'O'}, {id:'l', label:'L'}, {id:'i', label:'I'}, {id:'d', label:'D'}])},
+    {quiz:[
+      {q:'At system scale, “single responsibility” most closely means…', options:['One server per service', 'One database table per service', 'A service owns one business capability and its data', 'One endpoint per service'], answer:2, why:'It is the same idea as a bounded context.'},
+      {q:'The app adds Pune with a new price rule. Which design needs no edit to the old pricing code?', options:['A bigger if-else', 'Copying the whole service', 'One class per city that follows a shared pricing contract', 'A new database'], answer:2, why:'That is open/closed: add a class, keep the old code.'}
+    ], quizId:'pr-l1'}
+  ],
   sources:[`Martin, Design Principles and Design Patterns (2000); Clean Architecture (2017)`, `Liskov (1987)`, `Shopify Engineering (2019)`]
 },
 {
   id:'kiss-yagni-soc', title:'KISS, YAGNI and separation of concerns', minutes:10, tags:['KISS','YAGNI','separation of concerns','simplicity','over-engineering'],
-  summary:'Most systems fail from unnecessary complexity, not from too little of it. Keep it simple, build what you need now (with room to grow), and separate concerns so that later change is cheap.',
-  problem:`<p>A 4-person startup with 200 users builds 14 microservices, Kafka, a service mesh, Kubernetes with three clusters, and a custom feature-flag system “so we can scale like Netflix”. Six months later they ship features slowly, spend weekends debugging distributed tracing, and still have 200 users. Their competitor shipped on one Postgres and a monolith.</p>`,
-  intuition:`Starting a tiffin service. You don’t build an industrial kitchen for 10,000 meals on day one. You cook well in a small kitchen, keep the recipes, billing and delivery separate (so you can change one without breaking the others), and expand when orders actually grow.`,
+  summary:'Build the simplest design that meets today’s needs, and do not build for imagined futures. Keep rules, data and integrations in separate parts so later change stays cheap.',
+  problem:`<h3>A small example</h3><p>A 3-person startup runs a bike-sharing app for 500 riders. A teammate wants 6 microservices, a message queue and Kubernetes “to scale like Uber”.</p><ul><li>250 bikes on the road report a location every 5 seconds: 250 ÷ 5 = 50 requests a second.</li><li>One Postgres database can serve that easily.</li><li>Every extra part needs someone on call.</li></ul><p>What do we build now, and what do we leave for later?</p>`,
   how:{
-    steps:[`<b>KISS</b>: prefer the simplest design that meets today’s requirements and the next order of magnitude; boring, well-understood technology wins.`, `<b>YAGNI</b>: don’t build features or infrastructure for imagined future needs; build the seam where change is likely (an interface, a module boundary), not the whole future system.`, `<b>Separation of concerns</b>: keep UI, business rules, data access and integrations in separate modules; separate read and write paths when they genuinely differ.`, `Write down <b>what would make you change the design</b> (e.g. “when writes exceed 5K/s, shard orders by customer”). That is planning without building.`, `Revisit as metrics change: simplicity is a moving target, not an excuse to never evolve.`],
+    intro:'<h3>What happens behind the scenes</h3><p>The team decides in five small moves.</p>',
+    steps:[
+      {icon:'🎯', title:'KISS: keep it simple', text:'Pick the simplest design that meets today’s needs and the next 10 times growth. Here that is one app and one database.'},
+      {icon:'🚫', title:'YAGNI: do not build it yet', text:'“You aren’t gonna need it.” Skip Kafka and extra services until real numbers ask for them.'},
+      {icon:'🗂️', title:'Separate the concerns', text:'Inside the one app, keep pricing, payment and notifications in separate modules. Each can change without touching the others.'},
+      {icon:'📝', title:'Write down the triggers', text:'Note what would change the design, such as “above 5,000 requests a second, add a cache”. This is planning without building.'},
+      {icon:'🔄', title:'Check the numbers again', text:'Look at traffic and team size every few months. Simple is where you start, not where you must stay.'}
+    ],
     mount:host => rightSizer(host),
-    deep:`<p><b>Accidental vs essential complexity</b> (Fred Brooks, “No Silver Bullet”, 1986): the problem’s inherent difficulty is essential; everything we add through tools, layers and distribution is accidental. Each new moving part adds failure modes, on-call load and cognitive cost.</p><p><b>Reversible vs irreversible decisions:</b> spend design effort on hard-to-reverse choices (data model, public APIs, money flows, tenancy model); move fast on reversible ones (internal libraries, caching layer). Amazon calls these one-way and two-way doors.</p><p><b>“Simple” is not “naive”:</b> idempotency for payments, backups, timeouts, and basic observability are essential even in v1. Skipping them is not KISS, just debt with interest.</p>`
+    html:`<h3>Everyday comparison</h3><p>Think of opening a bike rental stall.</p><div class="simple-table">${h.table(['Rental stall', 'In the app'], [['Start with 10 bikes and one repair stand', 'One app, one database.'], ['Keep bikes, cash box and tools in separate places', 'Separate modules.'], ['Open a second stall when queues form', 'Add parts when the numbers say so.']])}</div><div class="callout tip"><b>Important point</b><p>Simple does not mean careless. Safe payments and backups are needed even in version 1.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Situation', 'Choice'], [['3 engineers, 50 requests a second', 'One app and one database.'], ['40 engineers blocking each other in one codebase', 'Split along the module lines you already kept.'], ['Money moves between riders and the company', 'Add safe retries and backups now.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say each of 6 services is up 99.9% of the time, and ending a ride needs all 6. Then 0.999⁶ is about 0.994, or 99.4%. A 30-day month has 43,200 minutes. The missing 0.6% is 43,200 × 0.006 = about 259 minutes, or 4.3 hours.</p><p>One app and one database, both at 99.9%, give 0.999 × 0.999 = about 0.998. That is about 86 minutes a month. Each extra part also adds on-call work and more places to trace a fault.</p><h4>When it goes wrong</h4><p>Simple does not mean every choice is easy to undo. Some choices are one-way doors, such as the data model, public APIs and how money moves. Say a payment is saved without a unique ride ID. Retrying it safely later is hard. Spend design time on these. Choose fast on two-way doors, such as an internal library.</p><h4>How it works inside</h4><p>Fred Brooks (1986) split complexity in two. Pricing rules and bike locking are essential, because the problem needs them. Extra tools and layers are accidental, because we chose them.</p>`
   },
-  tradeoffs:{use:[`Start with a modular monolith, one relational DB and managed services; add complexity when metrics demand it`], avoid:[`Distributed architectures for small teams and small load`, `Gold-plating features no user asked for`, `“Simple” designs that skip correctness essentials (idempotency, backups)`], alt:[`Designing seams (interfaces, module boundaries) that make later extraction easy`]},
+  tradeoffs:{use:[`Start the bike app as one app with clear modules, one relational database and managed services. Add parts when metrics demand it.`], avoid:[`Distributed designs for a 3-person team at 50 requests a second.`, `Gold-plating features no rider asked for.`], alt:[`Design seams now, such as module boundaries, so extracting a service later is easy.`]},
   real:[
-    {co:'Segment', tier:'confirmed', text:'Segment wrote about moving from more than 140 microservices for its destination integrations back to a single service, because operational overhead outweighed the benefits for that workload.', src:'Segment Engineering, “Goodbye Microservices: From 100s of problem children to 1 superstar” (2018)'},
-    {co:'Stack Overflow', tier:'confirmed', text:'Stack Overflow has described serving very large traffic from a largely monolithic .NET application on a small number of web and SQL Server machines, with heavy caching and careful performance work.', src:'Nick Craver, “Stack Overflow: The Architecture – 2016 Edition”'},
-    {co:'Kent Beck / XP', tier:'confirmed', text:'YAGNI (“You Aren’t Gonna Need It”) comes from Extreme Programming, advising against building functionality before it is needed.', src:'Beck, Extreme Programming Explained (1999); Fowler, “Yagni” (2015)'}
+    {co:'Segment', tier:'confirmed', text:'Segment wrote about moving from more than 140 microservices for its destination integrations back to a single service, because the operating overhead outweighed the benefits for that workload.', src:'Segment Engineering, “Goodbye Microservices: From 100s of problem children to 1 superstar” (2018)'},
+    {co:'Kent Beck / XP', tier:'confirmed', text:'YAGNI comes from Extreme Programming. It advises against building functionality before it is needed.', src:'Beck, Extreme Programming Explained (1999); Fowler, “Yagni” (2015)'}
   ],
-  mistakes:[`Choosing architecture by what big tech uses rather than by your load and team`, `Adding a queue, cache and NoSQL DB “just in case”`, `Mixing business rules into controllers and SQL so every change touches everything`],
-  interview:[`Start simple, state the scaling triggers, and evolve the design step by step. Interviewers reward this over a buzzword-heavy first draft`],
-  tryit:{note:'Set the sliders above to your current project. Then:', quiz:[{q:'A 5-engineer team at 300 req/s asks whether to adopt microservices. Best answer?', options:['Yes, always', 'A modular monolith with clear boundaries; extract services when team size or scaling needs demand it', 'Rewrite in Go first', 'Use serverless for everything'], answer:1, why:'Distributed complexity costs more than it saves at this scale.'}], quizId:'pr-l2'},
-  sources:[`Brooks, “No Silver Bullet” (1986)`, `Segment Engineering (2018)`, `Craver, Stack Overflow Architecture (2016)`, `Dijkstra, “On the role of scientific thought” (1974)`]
+  mistakes:[`Choosing an architecture because big companies use it, not because your load needs it.`, `Adding a queue, a cache and a second database “just in case”.`, `Mixing price rules into controllers and SQL, so every change touches everything.`],
+  interview:[`Start simple, state the scaling triggers, and evolve the design step by step. Interviewers reward this over a design full of buzzwords.`],
+  tryit:{note:'Set the sliders above to the bike app today, then to a much bigger version, and watch the “Not yet” list shrink. Then check yourself.', quiz:[{q:'A 5-engineer team at 300 requests a second asks whether to adopt microservices. Best answer?', options:['Yes, always', 'Use serverless for everything', 'A modular monolith with clear boundaries, and extract services when team size or scaling needs demand it', 'Rewrite in Go first'], answer:2, why:'Distributed complexity costs more than it saves at this scale.'}, {q:'What does YAGNI tell the bike team about Kafka?', options:['Never use it', 'Add it only when real needs, such as many independent consumers, appear', 'Use it from day one', 'Use it instead of a database'], answer:1, why:'Build seams for change, not the whole future.'}], quizId:'pr-l2'},
+  sources:[`Brooks, “No Silver Bullet” (1986)`, `Segment Engineering (2018)`, `Beck, Extreme Programming Explained (1999)`]
 },
 {
   id:'patterns-in-sd', title:'Design patterns that reappear in system design', minutes:11, tags:['Observer','Strategy','Factory','Circuit Breaker','Repository','patterns'],
-  summary:'Classic code patterns reappear at system scale: Observer becomes pub/sub, Strategy becomes pluggable policies, Factory becomes templated provisioning, Circuit Breaker becomes mesh resilience, Repository becomes data ownership.',
-  problem:`<p>In interviews and design reviews people say “use pub/sub here” or “make the eviction policy pluggable” without realising these are the same patterns they use in code every day. Seeing the connection helps you reason about trade-offs: what the pattern buys, what it costs, and when it’s overkill, at any scale.</p>`,
-  intuition:`Recipes repeat at different scales. The technique for making one cup of chai (boil, steep, strain) is the same one a tea factory uses, just with bigger equipment and new problems (quality control, logistics). Patterns are those reusable techniques.`,
+  summary:'Patterns from everyday code reappear at system scale. Observer becomes pub/sub, Strategy becomes pluggable policies, Factory becomes templates, Circuit Breaker becomes mesh resilience, and Repository becomes data ownership.',
+  problem:`<h3>A small example</h3><p>In a design review someone says “use pub/sub when a ride ends” and “make pricing pluggable”.</p><ul><li>When a ride ends, a receipt, points and analytics must all react.</li><li>Each city has its own price rule.</li><li>The payment provider is sometimes down.</li></ul><p>These are code patterns the team already knows. How do they look when the parts are separate services?</p>`,
   how:{
-    intro:'Pick a pattern to see its code form and its system-scale twin:',
+    intro:'<h3>What happens behind the scenes</h3><p>Five patterns show up in the bike app. Open each one below to see its code form and its system-scale twin.</p>',
+    steps:[
+      {icon:'👂', title:'Observer', text:'When a ride ends, the receipt, points and analytics each react. The ride code does not know who is listening.'},
+      {icon:'🎛️', title:'Strategy', text:'Each city’s price rule is a swappable piece. Config picks the one to use.'},
+      {icon:'🏭', title:'Factory', text:'One function reads config and creates the right payment provider.'},
+      {icon:'⚡', title:'Circuit breaker', text:'If payments keep failing, stop calling for a while and answer “payment pending”. Then try again.'},
+      {icon:'🗄️', title:'Repository', text:'Ride logic asks a repository for rides and never writes SQL. At system scale, only the Rides service touches ride tables.'}
+    ],
     mount:host => patternExplorer(host),
-    deep:`<p><b>Patterns carry costs:</b> Observer/pub-sub hides control flow (who reacts to this event?), so you need event catalogues and tracing. Strategy multiplies configurations to test. Factory adds indirection. Circuit breakers add states to reason about. Repository can become a leaky abstraction over complex queries. Use a pattern when its problem is present.</p><p><b>More system-scale patterns</b> you’ve met in this course: Saga (process manager), Outbox, CQRS, Sidecar, Ambassador (client-side proxy), Strangler Fig, Bulkhead, Leader election, Sharding, Cache-aside. Each is a named, reusable answer to a recurring distributed-systems problem.</p>`
+    html:`<h3>Everyday comparison</h3><p>Think of a bike shop.</p><div class="simple-table">${h.table(['Bike shop', 'Pattern'], [['A notice board: pin a note and everyone who cares reads it', 'Observer.'], ['A fuse box that trips when the current is too high', 'Circuit breaker.'], ['A front desk: customers ask the desk and never walk into the stockroom', 'Repository pattern.']])}</div><div class="callout tip"><b>Important point</b><p>A pattern is a name for a problem and its usual answer. Use one only when its problem is really there.</p></div><h3>When to use which</h3><div class="simple-table">${h.table(['Problem in the bike app', 'Pattern'], [['Many things must react to one event', 'Observer pattern, or pub/sub.'], ['Rules differ by city', 'Strategy pattern.'], ['A dependency keeps failing', 'Circuit breaker.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>Say the breaker opens when 50% of calls fail, after at least 20 calls, and stays open for 10 seconds. The 20-call minimum matters. Without it, 1 failure in 2 calls is 50% and would trip it.</p><p>Say 5 rides end each second, and each payment call waits 3 seconds before giving up. With no breaker, 5 × 3 = 15 calls are stuck waiting at any moment. With the breaker open, calls fail at once and riders see "payment pending". In 10 seconds, 5 × 10 = 50 rides get that answer without touching the provider.</p><h4>When it goes wrong</h4><p>Observer and pub/sub may deliver one event twice. Then points could be added twice. Make each listener safe to repeat, for example by recording the ride IDs it already counted. You will learn this in Module 7.</p><h4>How it works inside</h4><p>Strategy multiplies what you must test. With 3 price rules and 2 payment providers, there are 3 × 2 = 6 combinations to think about.</p>`
   },
-  tradeoffs:{use:[`When the recurring problem is actually present: multiple implementations, many listeners, fragile dependencies, data-access isolation`], avoid:[`Pattern-driven design (“we need a factory”) without a concrete need`], alt:[`Plain functions and direct calls for simple, stable code paths`]},
+  tradeoffs:{use:[`When the problem is present: several city rules, many listeners to a ride-ended event, a fragile payment provider, or data that one service should own.`], avoid:[`Pattern-driven design, such as “we need a factory” with no concrete need.`], alt:[`Plain functions and direct calls for simple, stable paths, such as unlocking a bike.`]},
   real:[
     {co:'Gang of Four', tier:'confirmed', text:'Gamma, Helm, Johnson and Vlissides catalogued 23 object-oriented patterns, including Observer, Strategy and Factory Method, in Design Patterns (1994).', src:'Gamma et al., Design Patterns: Elements of Reusable Object-Oriented Software (1994)'},
-    {co:'Envoy load-balancing policies', tier:'confirmed', text:'Envoy offers interchangeable load-balancing policies (round robin, least request, ring hash, Maglev, random) chosen by configuration: the Strategy pattern at infrastructure scale.', src:'Envoy documentation — Load balancing'},
-    {co:'Microservices.io pattern language', tier:'confirmed', text:'Chris Richardson’s catalogue documents system-scale patterns such as Saga, Transactional Outbox, API Gateway, CQRS and Database per Service.', src:'Richardson, Microservices Patterns (2018); microservices.io'}
+    {co:'Envoy load-balancing policies', tier:'confirmed', text:'Envoy offers interchangeable load-balancing policies, such as round robin, least request and ring hash, chosen by configuration. That is the Strategy pattern at infrastructure scale.', src:'Envoy documentation, Load balancing'}
   ],
-  mistakes:[`Event-driven everything with no catalogue of who consumes what`, `Repositories that expose ORM internals`, `Using patterns as vocabulary without stating the trade-off`],
-  interview:[`Name the pattern and its trade-off: “pub/sub here decouples billing from ordering, at the cost of eventual consistency and idempotent consumers”`],
-  tryit:{note:'Which pattern is this, at system scale?', mount:host => sortGame(host, [
-    {t:'Order events consumed independently by billing, loyalty and analytics', c:'obs', why:'Observer → pub/sub.'},
-    {t:'Choose LRU or LFU eviction with a config flag', c:'str', why:'Strategy.'},
-    {t:'Envoy ejects a host after 5 consecutive 5xx', c:'cb', why:'Circuit breaker / outlier detection.'},
-    {t:'Only the Orders service reads and writes the orders tables; others call its API', c:'rep', why:'Repository → data ownership.'},
-    {t:'A service template creates LB, autoscaling and dashboards from 5 parameters', c:'fac', why:'Factory.'}
-  ], [{id:'obs', label:'Observer'}, {id:'str', label:'Strategy'}, {id:'fac', label:'Factory'}, {id:'cb', label:'Circuit breaker'}, {id:'rep', label:'Repository'}])},
-  sources:[`Gamma et al. (1994)`, `Fowler, Patterns of Enterprise Application Architecture (2002)`, `Richardson, Microservices Patterns (2018)`, `Nygard, Release It!`]
+  mistakes:[`Using events for everything with no list of who consumes what.`, `Repositories that expose database internals to callers.`, `Naming a pattern without saying its trade-off.`],
+  interview:[`Name the pattern and its trade-off: “pub/sub here decouples receipts from rides, at the cost of eventual consistency and consumers that must handle duplicates”.`],
+  tryit:[
+    {note:'Which pattern is this, at system scale?', mount:host => sortGame(host, [
+      {t:'Ride-ended events are consumed separately by receipts, points and analytics', c:'obs', why:'Observer, as pub/sub.'},
+      {t:'A config flag switches the cache between LRU and LFU eviction', c:'str', why:'Strategy.'},
+      {t:'The mesh stops sending traffic to a Payments host after 5 errors in a row', c:'cb', why:'Circuit breaker, as outlier ejection.'},
+      {t:'Only the Rides service reads and writes ride tables, and others call its API', c:'rep', why:'Repository, as data ownership.'},
+      {t:'A service template creates the load balancer, autoscaling and dashboards from 5 settings', c:'fac', why:'Factory.'}
+    ], [{id:'obs', label:'Observer'}, {id:'str', label:'Strategy'}, {id:'fac', label:'Factory'}, {id:'cb', label:'Circuit breaker'}, {id:'rep', label:'Repository'}])},
+    {quiz:[
+      {q:'Pub/sub is the system-scale form of which pattern?', options:['Factory', 'Repository', 'Observer', 'Singleton'], answer:2, why:'Publishers do not know their subscribers.'},
+      {q:'What is the main cost of using events for everything?', options:['Events are always slow', 'It is hard to see who reacts to what, so you need a list of consumers and tracing', 'Events need a bigger database', 'Events cannot be retried'], answer:1, why:'Hidden control flow is the price of decoupling.'}
+    ], quizId:'pr-l3'}
+  ],
+  sources:[`Gamma et al. (1994)`, `Fowler, Patterns of Enterprise Application Architecture (2002)`, `Richardson, Microservices Patterns (2018)`]
 },
 {
   id:'tradeoff-thinking', title:'“Everything is a trade-off”: thinking like an architect', minutes:11, tags:['trade-offs','decision matrix','ADR','reversibility','sensitivity'],
-  summary:'There is rarely a best design, only a best fit for specific requirements and constraints. Make the criteria explicit, weigh them, check how sensitive the choice is to your assumptions, and record the decision with its context.',
-  problem:`<p>Two senior engineers argue for an hour: one wants Cassandra for the chat message store, the other wants Postgres. Both are right about something: Cassandra writes scale easily; Postgres gives transactions and flexible queries. The argument goes in circles because nobody has said which requirements matter most, or what evidence would change their mind.</p>`,
-  intuition:`Choosing between a scooter, a car and the metro for your commute. None is “best”: the scooter is cheap and quick in traffic, the car is comfortable in the rain, the metro is predictable. You decide by weighing what matters to you (cost, time, comfort), and your answer changes if you move house or get a bigger family.`,
+  summary:'There is rarely a best design, only a best fit for your needs. List the criteria, weigh them, check which assumption could flip the choice, and write the decision down.',
+  problem:`<h3>A small example</h3><p>The bike app must store live bike locations. Two engineers argue for an hour. One wants Redis, the other wants Postgres.</p><ul><li>20,000 bikes report a location every 5 seconds: 20,000 ÷ 5 = 4,000 writes a second.</li><li>The rider map must show nearby bikes fast.</li><li>Trip history must be kept safely.</li></ul><p>Both engineers are right about something. How do we decide without going in circles?</p>`,
   how:{
-    steps:[`<b>State the requirements and constraints</b> first: scale, latency, consistency, team skills, budget, deadlines, compliance.`, `<b>List real options</b> (at least two), including “do nothing” or “simplest thing”.`, `<b>Score against weighted criteria</b> (a decision matrix) and make the judgements visible.`, `<b>Test sensitivity</b>: which assumption, if wrong, flips the decision? Gather evidence there (benchmark, prototype, load test).`, `<b>Decide and record</b> an Architecture Decision Record: context, options, decision, consequences, and when to revisit.`],
+    intro:'<h3>What happens behind the scenes</h3><p>The team follows five steps and uses the matrix below.</p>',
+    steps:[
+      {icon:'📋', title:'State the needs first', text:'Write down scale, speed, safety, team skills and budget. Argue about options only after that.'},
+      {icon:'🔀', title:'List real options', text:'Name at least two, such as Postgres, Redis and DynamoDB. Include the simplest one.'},
+      {icon:'⚖️', title:'Score with weights', text:'Give each criterion a weight, then score every option. A matrix makes the judgements visible.'},
+      {icon:'🔬', title:'Test what could flip it', text:'Find the assumption that, if wrong, changes the winner. Test that one with a small benchmark.'},
+      {icon:'🗒️', title:'Decide and record it', text:'Write a short decision record with the context, the choice, what you give up, and when to look again.'}
+    ],
     mount:host => tradeoffMatrix(host),
-    deep:`<p><b>Common trade-off axes:</b> consistency vs availability/latency (CAP/PACELC); latency vs throughput (batching); cost vs performance (caching, replicas); simplicity vs flexibility; build vs buy; time-to-market vs long-term maintainability; read vs write optimisation (indexes, denormalisation); isolation vs efficiency (silo vs pool).</p><p><b>Language that shows judgement:</b> “We choose X because requirement A dominates; we give up B; we mitigate B with C; we will revisit if metric D crosses E.” This structure works in interviews, design reviews and ADRs alike.</p><p><b>ADRs</b> (Michael Nygard, 2011) are short markdown files kept with the code: Title, Status, Context, Decision, Consequences. They prevent re-litigating settled decisions and help newcomers understand why things are the way they are.</p>`
+    html:`<h3>Everyday comparison</h3><p>Think of getting to work by scooter, car or metro.</p><div class="simple-table">${h.table(['Choice', 'Wins when you care about'], [['Scooter', 'Cost and speed in traffic.'], ['Car', 'Comfort in the rain.'], ['Metro', 'Being on time.']])}</div><div class="callout tip"><b>Important point</b><p>None is best everywhere. Change what you care about, or where you live, and the answer changes.</p></div><h3>How we handle it</h3><div class="simple-table">${h.table(['Question in the bike app', 'What we do'], [['Which store is fastest?', 'Fast for what? Write, read or both.'], ['Which store is safest?', 'Add “keeps data if a machine fails” as a criterion.'], ['What if our guess is wrong?', 'Find the guess that flips the winner and test it.']])}</div>`,
+    deep:`<h4>The numbers</h4><p>In the weighted matrix, Redis scores 4 × 5 + 4 × 5 + 2 × 2 + 2 × 3 + 1 × 1 + 1 × 2 = 20 + 20 + 4 + 6 + 1 + 2 = 53. Postgres scores 12 + 12 + 10 + 6 + 5 + 4 = 49. Now raise the weight on "Keeps data if a machine fails" from 2 to 4. Postgres gains 2 × 5 = 10 and reaches 59. Redis gains 2 × 2 = 4 and reaches 57. One small change flips the winner.</p><h4>When it goes wrong</h4><p>The size of the data depends on the question. The latest location only is 20,000 bikes × 100 bytes, say, which is 2,000,000 bytes, or 2 MB. Full history is 4,000 writes × 86,400 seconds = 345,600,000 writes a day. At 100 bytes each, that is about 34.6 GB a day. A combination can beat any single store.</p><h4>How it works inside</h4><p>A decision record (Michael Nygard, 2011) has a title, status, context, decision and consequences. Add a trigger to look again. For example, at 100,000 bikes, the writes become 100,000 ÷ 5 = 20,000 each second.</p>`
   },
-  tradeoffs:{use:[`Any decision that is costly to reverse or contested`], avoid:[`Fake precision: weighted scores are a thinking tool, not an oracle`, `Analysis paralysis on cheap, reversible choices`], alt:[`A time-boxed spike or prototype to get real data`, `“Disagree and commit” after a clear decision process`]},
+  tradeoffs:{use:[`Any choice that is hard to undo or hotly argued, such as where live bike locations are stored.`], avoid:[`Fake precision. A weighted score is a thinking tool, not an oracle.`, `Long analysis of cheap, reversible choices, such as a map colour.`], alt:[`A time-boxed prototype that gives real numbers.`, `“Disagree and commit” once the process was fair and the decision is written down.`]},
   real:[
-    {co:'Fundamentals of Software Architecture', tier:'confirmed', text:'Richards and Ford state as their “First Law of Software Architecture”: everything in software architecture is a trade-off, and the “why” is more important than the “how”.', src:'Richards & Ford, Fundamentals of Software Architecture (O’Reilly, 2020)'},
-    {co:'Architecture Decision Records', tier:'confirmed', text:'Michael Nygard proposed lightweight ADRs to document context, decision and consequences; many organisations keep them in their code repositories.', src:'Michael Nygard, “Documenting Architecture Decisions” (2011)'},
-    {co:'AWS Well-Architected', tier:'confirmed', text:'The Well-Architected Framework discusses explicit trade-offs between its pillars (operational excellence, security, reliability, performance efficiency, cost optimisation, sustainability).', src:'AWS Well-Architected Framework'}
+    {co:'Fundamentals of Software Architecture', tier:'confirmed', text:'Richards and Ford state their “First Law of Software Architecture”: everything in software architecture is a trade-off, and the “why” is more important than the “how”.', src:'Richards & Ford, Fundamentals of Software Architecture (O’Reilly, 2020)'},
+    {co:'Architecture Decision Records', tier:'confirmed', text:'Michael Nygard proposed lightweight decision records for context, decision and consequences. Many teams keep them in their code repositories.', src:'Michael Nygard, “Documenting Architecture Decisions” (2011)'}
   ],
-  mistakes:[`Arguing solutions before agreeing on requirements`, `Presenting one option as the only option`, `Not writing down why a decision was made`],
-  interview:[`For every major choice say the alternative, why you chose this one, what you give up, and when you’d change your mind`],
-  tryit:{note:'Change the weights above until the winner flips, and notice which criterion drives the decision. Then order the steps:', mount:host => orderGame(host, ['Agree requirements and constraints', 'List at least two real options', 'Score options against weighted criteria', 'Find the assumption that flips the decision and test it', 'Decide and write an ADR with consequences and a revisit trigger'])},
-  sources:[`Richards & Ford, Fundamentals of Software Architecture (2020)`, `Nygard, Documenting Architecture Decisions (2011)`, `AWS Well-Architected Framework`]
+  mistakes:[`Arguing about solutions before agreeing on needs.`, `Showing only one option, as if it were the only one.`, `Not writing down why a decision was made.`],
+  interview:[`For each big choice say the alternative, why you chose this one, what you give up, and when you would change your mind.`],
+  tryit:[
+    {note:'Drag the weights above until the winner flips. Which criterion drives the decision? Then put the steps in order.', mount:host => orderGame(host, ['Agree needs and constraints', 'List at least two real options', 'Score options against weighted criteria', 'Find the assumption that flips the decision and test it', 'Decide and write a decision record with a revisit trigger'])},
+    {quiz:[
+      {q:'What is the best first step in a contested technology choice?', options:['Pick the most popular option', 'Ask a vendor', 'Benchmark everything', 'Agree on needs and weighted criteria'], answer:3, why:'Decisions follow from criteria.'},
+      {q:'What does a sensitivity check tell you?', options:['Which assumption, if wrong, would flip the decision', 'The cost', 'The speed', 'Nothing useful'], answer:0, why:'It shows where to gather evidence.'},
+      {q:'A decision record holds…', options:['Code style rules', 'Deployment steps', 'API docs', 'The context, decision and consequences of a choice'], answer:3, why:'It keeps the “why” with the code.'}
+    ], quizId:'pr-l4'}
+  ],
+  sources:[`Richards & Ford, Fundamentals of Software Architecture (2020)`, `Nygard, Documenting Architecture Decisions (2011)`]
 }
 ];
 
@@ -216,47 +259,50 @@ SDA.register({
   outcomes:['Map SOLID principles to service boundaries and contracts', 'Right-size an architecture to real load and team size (KISS/YAGNI)', 'Recognise classic patterns at system scale and state their trade-offs', 'Make, test and record architecture decisions with explicit trade-offs'],
   lessons,
   quiz:[
-    {q:'At system scale, the Single Responsibility Principle most closely maps to…', options:['One server per service', 'A service owning one business capability and its data', 'One database table per service', 'One endpoint per service'], answer:1, why:'Bounded contexts.'},
-    {q:'A reporting service reads another team’s tables directly. Which principle is violated at system scale?', options:['Liskov', 'Dependency inversion (depend on contracts, not internals)', 'KISS', 'Open/closed'], answer:1, why:'Depend on APIs/events.'},
-    {q:'YAGNI advises…', options:['Never plan ahead', 'Don’t build features/infrastructure before they’re needed; design seams instead', 'Always use microservices', 'Avoid tests'], answer:1, why:'Plan triggers; build what’s needed.'},
-    {q:'Pub/sub is the system-scale form of which pattern?', options:['Factory', 'Observer', 'Repository', 'Singleton'], answer:1, why:'Publishers don’t know their subscribers.'},
-    {q:'Pluggable load-balancing algorithms are an example of…', options:['Strategy', 'Observer', 'Adapter', 'Decorator'], answer:0, why:'Swap the algorithm by config.'},
-    {q:'The best first step in a contested technology decision is…', options:['Pick the most popular option', 'Agree on requirements and weighted criteria', 'Benchmark everything', 'Ask a vendor'], answer:1, why:'Decisions follow from criteria.'},
-    {q:'An ADR records…', options:['Code style rules', 'Context, decision and consequences of an architecture choice', 'Deployment steps', 'API docs'], answer:1, why:'The why behind decisions.'},
-    {q:'Which is essential complexity even in a v1 payments app?', options:['A service mesh', 'Idempotent payment requests', 'Kafka', 'Multi-region active-active'], answer:1, why:'Correctness essentials aren’t over-engineering.'},
-    {q:'Sensitivity analysis in a decision matrix tells you…', options:['The cost', 'Which assumption, if wrong, would flip the decision', 'The latency', 'Nothing useful'], answer:1, why:'Gather evidence where it matters.'},
-    {q:'Segment moving 140+ microservices back to one service illustrates…', options:['Microservices always fail', 'Operational complexity can outweigh benefits for a workload', 'Monoliths can’t scale', 'Kafka is required'], answer:1, why:'Fit the architecture to the problem.'},
-    {type:'scenario', q:'Your CTO wants to “move to microservices” for a 12-engineer team running a Rails monolith at 2,000 req/s. How do you respond?', answer:'<ol><li>Ask what problem we’re solving: deploy contention, scaling hotspots, team autonomy, reliability isolation? Measure lead time, incident causes and hotspots.</li><li>Propose a <b>modular monolith</b> first: enforce module boundaries per bounded context, own data per module, add CI checks for dependencies.</li><li>Extract a service only where there’s a clear driver (e.g. image processing needs separate scaling; payments needs isolation), using the strangler fig with a facade.</li><li>State costs: network failures, distributed transactions (sagas), observability, on-call and platform work.</li><li>Record the decision in an ADR with triggers to revisit (team > 30 engineers, independent scaling needs).</li></ol>'},
-    {type:'scenario', q:'Choose a message store for a chat app (50K writes/s, growing 3× a year, messages fetched by conversation). Walk through your trade-off reasoning.', answer:'<ul><li><b>Requirements</b>: high write throughput, reads by (conversation_id, time) range, per-conversation ordering, durability, modest query flexibility, multi-region later.</li><li><b>Options</b>: sharded Postgres (partition by conversation_id), Cassandra/ScyllaDB (partition key conversation_id, clustering by message time), DynamoDB (same model, managed).</li><li><b>Trade-off</b>: the access pattern is a classic wide-column fit. Cassandra/Scylla/DynamoDB give easy write scaling at the cost of ad-hoc queries; Postgres gives transactions and flexible queries but needs sharding work sooner.</li><li><b>Sensitivity</b>: if the team lacks Cassandra ops skills, managed DynamoDB or sharded Postgres may win; if we need complex search, add a search index regardless.</li><li><b>Decision + ADR</b>: e.g. ScyllaDB/Cassandra keyed by conversation with time-bucketed partitions; revisit if multi-region writes or cost change.</li></ul>'}
+    {q:'At system scale, the single responsibility principle most closely maps to…', options:['One server per service', 'One endpoint per service', 'One database table per service', 'A service that owns one business capability and its data'], answer:3, why:'It is the same idea as a bounded context.'},
+    {q:'The Reports service reads the Rides team’s tables directly. Which principle does this break at system scale?', options:['Liskov', 'Dependency inversion: depend on contracts, not internals', 'KISS', 'Open/closed'], answer:1, why:'Depend on APIs and events instead.'},
+    {q:'YAGNI advises…', options:['Never plan ahead', 'Always use microservices', 'Do not build features or infrastructure before they are needed, and design seams instead', 'Avoid tests'], answer:2, why:'Write down the triggers, and build only what is needed.'},
+    {q:'Pub/sub is the system-scale form of which pattern?', options:['Factory', 'Observer', 'Repository', 'Singleton'], answer:1, why:'Publishers do not know their subscribers.'},
+    {q:'Pluggable load-balancing algorithms are an example of…', options:['Observer', 'Adapter', 'Decorator', 'Strategy'], answer:3, why:'Config swaps the algorithm.'},
+    {q:'What is the best first step in a contested technology choice?', options:['Agree on needs and weighted criteria', 'Pick the most popular option', 'Benchmark everything', 'Ask a vendor'], answer:0, why:'Decisions follow from criteria.'},
+    {q:'A decision record holds…', options:['Code style rules', 'The context, decision and consequences of a design choice', 'Deployment steps', 'API docs'], answer:1, why:'It keeps the “why” next to the code.'},
+    {q:'Which of these is still needed in version 1 of a ride-payment app?', options:['A service mesh', 'Kafka', 'Safe retries so a rider is never charged twice', 'Multi-region active-active'], answer:2, why:'Correctness basics are not over-engineering.'},
+    {q:'A sensitivity check in a decision matrix tells you…', options:['The cost', 'The speed', 'Nothing useful', 'Which assumption, if wrong, would flip the decision'], answer:3, why:'It shows where to gather evidence.'},
+    {q:'Segment moving more than 140 microservices back into one service shows that…', options:['Microservices always fail', 'Monoliths cannot scale', 'The operating cost of many services can outweigh their benefits for a workload', 'Kafka is required'], answer:2, why:'Fit the design to the problem.'},
+    {type:'scenario', q:'The CTO wants to “move to microservices” for a 12-engineer team that runs the bike app as one Rails app at 2,000 requests a second. How do you respond?', answer:'<ol><li>Ask which problem we are solving: slow deploys, one hot spot, team independence or fault isolation. Measure lead time and past incidents.</li><li>Propose a <b>modular monolith</b> first: one module per bounded context, each with its own data, and a build check that blocks cross-module shortcuts.</li><li>Extract a service only with a clear reason. For example, image processing may need its own scaling, and payments may need isolation. Use the strangler fig with a facade.</li><li>State the costs: network failures, distributed transactions (sagas), tracing, on-call load and platform work.</li><li>Write a decision record with triggers to look again, such as more than 30 engineers or a need for independent scaling.</li></ol>'},
+    {type:'scenario', q:'Choose a store for the bike app’s ride history: 2 million rides a day, each written once and later read by riders or by reports. Walk through your trade-off reasoning.', answer:'<ul><li><b>Numbers first</b>: 2,000,000 ÷ 86,400 seconds ≈ 23 writes a second. At about 1 KB a ride, that is about 2 GB a day, or about 730 GB a year.</li><li><b>Options</b>: Postgres, a wide-column store such as Cassandra, or DynamoDB.</li><li><b>Trade-off</b>: 23 writes a second is tiny. Postgres gives transactions, joins and easy reports, with no extra system to run. A wide-column store buys write scale we do not need and costs ad-hoc queries.</li><li><b>Sensitivity</b>: if rides grew 100 times to about 2,300 writes a second, a single Postgres primary may still cope, but we should partition by month and add read replicas for reports.</li><li><b>Decision and record</b>: Postgres with monthly partitions. Revisit when yearly data passes a few terabytes or writes pass a few thousand a second.</li></ul>'}
   ],
   cheatsheet:[
-    {h:'🧱 SOLID at two scales', items:['S: one reason to change ↔ one capability per service', 'O: extend via new code ↔ events, plugins, webhooks', 'L: honest substitutes ↔ compatible API versions', 'I: small interfaces ↔ focused APIs/BFFs', 'D: depend on abstractions ↔ depend on contracts, not DBs']},
-    {h:'✂️ Simplicity', items:['KISS: boring tech, fewest moving parts', 'YAGNI: build seams, not futures', 'Separate UI, rules, data access, integrations', 'Write down scaling triggers', 'Essential correctness (idempotency, backups) is not over-engineering']},
-    {h:'🔁 Patterns ↔ systems', items:['Observer ↔ pub/sub, event-driven', 'Strategy ↔ pluggable policies (LB, eviction, retry)', 'Factory ↔ service templates, tenant provisioning', 'Circuit breaker ↔ mesh outlier ejection', 'Repository ↔ data ownership per service']},
-    {h:'⚖️ Trade-offs', items:['Requirements → options → weighted criteria', 'Sensitivity: which assumption flips it?', 'Say: choose X because A; give up B; mitigate with C; revisit when D', 'ADR: context, decision, consequences', 'One-way vs two-way doors']}
+    {h:'🧱 SOLID at two scales', items:['S: one reason to change ↔ one capability per service', 'O: add new code ↔ events, plugins, webhooks', 'L: honest substitutes ↔ compatible API versions', 'I: small contracts ↔ focused APIs per client', 'D: depend on contracts ↔ not on another team’s database']},
+    {h:'✂️ Keep it simple', items:['KISS: the simplest design that meets today’s needs', 'YAGNI: build seams, not futures', 'Separate pricing, payment and notifications', 'Write down the triggers that would change the design', 'Safe retries and backups are not over-engineering']},
+    {h:'🔁 Patterns and their system twins', items:['Observer ↔ pub/sub', 'Strategy ↔ pluggable policies', 'Factory ↔ service templates', 'Circuit breaker ↔ mesh outlier ejection', 'Repository ↔ one service owns each dataset']},
+    {h:'⚖️ Trade-offs', items:['Needs → options → weighted criteria', 'Sensitivity: which assumption flips it?', 'Say: choose X because A, give up B, soften with C, revisit when D', 'Decision record: context, decision, consequences', 'One-way doors need care, two-way doors need speed']}
   ],
   glossary:[
-    {term:'SOLID', def:'Five object-oriented design principles: single responsibility, open/closed, Liskov substitution, interface segregation, dependency inversion.'},
-    {term:'Single responsibility principle', aka:['SRP'], def:'A module should have one reason to change.'},
-    {term:'Open/closed principle', def:'Software should be open for extension but closed for modification.'},
-    {term:'Liskov substitution principle', aka:['LSP', 'Liskov substitution'], def:'Subtypes must be usable wherever their base type is expected without breaking correctness.'},
-    {term:'Interface segregation principle', aka:['ISP'], def:'Clients should not depend on methods they don’t use; prefer small, focused interfaces.'},
-    {term:'Dependency inversion principle', aka:['DIP', 'dependency inversion'], def:'High-level modules depend on abstractions, and details implement those abstractions.'},
-    {term:'Coupling', def:'How much one component depends on another; lower is usually better.'},
-    {term:'Cohesion', def:'How closely the responsibilities within a component belong together; higher is usually better.'},
-    {term:'KISS', aka:['keep it simple'], def:'“Keep it simple”: prefer the simplest design that meets the requirements.'},
-    {term:'YAGNI', aka:['you aren’t gonna need it'], def:'Don’t build functionality until it is actually needed.'},
-    {term:'Separation of concerns', def:'Dividing a system so each part addresses a distinct concern.'},
-    {term:'Accidental complexity', aka:['essential complexity'], def:'Complexity introduced by our tools and choices, as opposed to the problem’s inherent (essential) complexity.'},
-    {term:'Design pattern', aka:['design patterns'], def:'A named, reusable solution to a recurring design problem.'},
-    {term:'Observer pattern', aka:['Observer'], def:'Objects subscribe to a subject and are notified of its changes.'},
-    {term:'Strategy pattern', aka:['Strategy'], def:'Encapsulating interchangeable algorithms behind a common interface.'},
-    {term:'Factory pattern', aka:['Factory', 'factory method'], def:'Creating objects through a function or class that chooses the concrete implementation.'},
-    {term:'Repository pattern', aka:['Repository'], def:'Mediating between domain logic and data storage through a collection-like interface.'},
-    {term:'Decision matrix', aka:['weighted decision matrix'], def:'A table scoring options against weighted criteria to support a decision.'},
-    {term:'Sensitivity analysis', def:'Checking how much a decision changes when assumptions or weights change.'},
-    {term:'Architecture Decision Record', aka:['ADR', 'ADRs'], def:'A short document recording an architecture decision’s context, choice and consequences.'},
-    {term:'One-way door', aka:['two-way door'], def:'A hard-to-reverse decision (one-way) versus an easily reversible one (two-way).'}
+    {term:'SOLID', def:'Five habits that keep code easy to change: single responsibility, open/closed, Liskov substitution, interface segregation and dependency inversion. Example: after the split, a new city price rule is a new class, not an edit to old code.'},
+    {term:'Single responsibility principle', aka:['SRP'], def:'A part should have only one reason to change. Example: pricing and SMS live in separate parts, so an SMS change cannot break pricing.'},
+    {term:'Open/closed principle', aka:['open/closed'], def:'Add new behaviour by adding new code, not by editing old code. Example: Pune’s price rule is a new class, and the old rules are untouched.'},
+    {term:'Liskov substitution principle', aka:['LSP', 'Liskov substitution'], def:'A replacement must work everywhere the original worked, with the same promises. Example: a second payment provider reports declines the same way as the first.'},
+    {term:'Interface segregation principle', aka:['ISP', 'interface segregation'], def:'Give each client a small contract with only what it needs. Example: the rider app gets bike status and price, not a 90-field bike record.'},
+    {term:'Dependency inversion principle', aka:['DIP', 'dependency inversion'], def:'Business logic depends on contracts, and details plug in behind them. Example: ride logic calls a payment contract, and each vendor implements it.'},
+    {term:'God class', aka:['god classes', 'god service', 'god services'], def:'One huge class or service that does too many jobs, so every change touches it. Example: a 4,000-line RideService that prices, charges, texts and saves.'},
+    {term:'Coupling', def:'How much one part depends on another. Lower is usually better. Example: if ending a ride needs five services deployed together, coupling is high.'},
+    {term:'Cohesion', def:'How well the things inside one part belong together. Higher is usually better. Example: everything about fares lives in one pricing module.'},
+    {term:'KISS', aka:['keep it simple'], def:'“Keep it simple”: choose the simplest design that meets today’s needs. Example: one app and one database for 500 riders.'},
+    {term:'YAGNI', aka:['you aren’t gonna need it'], def:'“You aren’t gonna need it”: do not build something until it is really needed. Example: no Kafka until many independent consumers exist.'},
+    {term:'Separation of concerns', def:'Keeping different kinds of work in different parts. Example: pricing, payment and notifications are separate modules in one app.'},
+    {term:'Essential complexity', def:'Difficulty that comes from the problem itself. Example: pricing rides by time and city is hard whatever tools you use.'},
+    {term:'Accidental complexity', def:'Difficulty we add with our tools and design choices. Example: six services and a message queue for 50 requests a second.'},
+    {term:'Design pattern', aka:['design patterns'], def:'A named, reusable answer to a problem that keeps coming back. Example: “Observer” names the idea of many parts reacting to one event.'},
+    {term:'Observer pattern', aka:['Observer'], def:'Parts subscribe to a source and are told when it changes. At system scale it becomes pub/sub. Example: receipts, points and analytics all react to RideEnded.'},
+    {term:'Strategy pattern', def:'Keep interchangeable rules behind one contract and pick one by config. Example: each city has its own pricing rule.'},
+    {term:'Factory pattern', aka:['Factory', 'factory method'], def:'A function that creates the right version of something from config. Example: paymentFor(config) returns the right payment provider.'},
+    {term:'Repository pattern', def:'A single place that stores and fetches one kind of data, so other code never writes SQL. Example: ride logic asks RideRepository for rides.'},
+    {term:'Decision matrix', aka:['weighted decision matrix'], def:'A table that scores each option against weighted criteria. Example: Postgres, Redis and DynamoDB scored for live bike locations.'},
+    {term:'Sensitivity analysis', aka:['sensitivity check'], def:'Checking which assumption, if wrong, would change the decision. Example: if “keeps data if a machine fails” counts double, Redis stops winning.'},
+    {term:'Architecture Decision Record', aka:['ADR', 'ADRs', 'decision record', 'decision records'], def:'A short note that records a design choice, its context and its consequences. Example: “We store live bike locations in Redis. Revisit if we need history there.”'},
+    {term:'One-way door', aka:['one-way doors'], def:'A decision that is hard to undo, so it deserves careful thought. Example: the data model for rides and payments.'},
+    {term:'Two-way door', aka:['two-way doors'], def:'A decision that is easy to undo, so it is fine to decide fast. Example: picking a map colour or a small internal library.'}
   ],
   sources:['Martin, Clean Architecture (2017); Liskov (1987)', 'Gamma et al., Design Patterns (1994); Fowler, PoEAA (2002); Richardson, Microservices Patterns (2018)', 'Brooks, No Silver Bullet (1986); Beck, Extreme Programming Explained (1999)', 'Richards & Ford, Fundamentals of Software Architecture (2020); Nygard, Documenting Architecture Decisions (2011)', 'Segment (2018), Shopify (2019), Stack Overflow (2016) engineering posts']
 });

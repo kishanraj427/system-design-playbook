@@ -27,6 +27,15 @@
   try {
     let doc = await navigate('#/l/what-is-system-design');
     check(doc.documentElement.scrollWidth <= frame.contentWindow.innerWidth + 1, 'Lesson page overflows a 360px viewport');
+    const pictureSteps = [...doc.querySelectorAll('#how .picture-steps > li')];
+    check(pictureSteps.length === 5, 'The model lesson needs five numbered picture steps');
+    check(pictureSteps.every(step => step.querySelector('.picture-steps-icon[aria-hidden="true"]') && step.querySelector('h3') && step.querySelector('p')), 'Every picture step needs an icon, heading and explanation');
+    const tables = [...doc.querySelectorAll('#how .tbl-wrap')];
+    check(tables.length === 2 && tables.every(table => table.scrollWidth <= table.clientWidth + 1), 'Lesson 1 tables must be readable without sideways scrolling on a phone');
+    const diagram = doc.querySelector('#how .diagram');
+    check(diagram && !/Load balancer|Cache|Job queue/i.test(diagram.textContent), 'The opening diagram must show the overload problem only');
+    const lesson = frame.contentWindow.SDA.lessons.get('what-is-system-design');
+    check(!lesson.summary.includes('In short') && doc.querySelector('.lead')?.textContent.startsWith('In short.'), 'In short must display without entering the searchable summary');
     let button = doc.querySelector('#how button[aria-controls]');
     check(button && button.textContent.includes('Go deeper'), 'Missing inline Go deeper button after How; controls: ' + [...doc.querySelectorAll('button[aria-controls]')].map(b => b.getAttribute('aria-controls') + '@' + (b.closest('section')?.id || 'none')).join(', ') + '; how: ' + (doc.querySelector('#how')?.textContent.slice(-100) || 'absent'));
     const region = doc.getElementById(button.getAttribute('aria-controls'));
@@ -48,6 +57,9 @@
     check(button && button.getAttribute('aria-expanded') === 'true', 'Deep link must open the inline disclosure');
     await wait(50);
     check(frame.contentWindow.scrollY > 0, 'Deep link must scroll to the revealed explanation');
+    doc = await navigate('#/l/seven-step-approach');
+    const nextLesson = frame.contentWindow.SDA.lessons.get('seven-step-approach');
+    check(!nextLesson.summary.includes('In short') && doc.querySelector('.lead')?.textContent.startsWith('In short.'), 'Every lesson must show In short outside its searchable summary');
     result.textContent = 'PASS';
   } catch (error) {
     result.textContent = 'FAIL: ' + error.message;

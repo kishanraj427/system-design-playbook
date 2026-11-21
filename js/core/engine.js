@@ -740,20 +740,32 @@ function tabs(host, list, opts){
   opts = opts || {};
   const bar = el('div', {class:'tabs', role:'tablist'}); const panel = el('div', {role:'tabpanel', tabindex:'0'});
   let disp = null;
+  // A footer under the panel (previous, next, tabs not opened yet) shows when there are 3 or more tabs. Pass {nav:false} to hide it.
+  const useNav = opts.nav !== false && list.length >= 3, seen = new Set(), foot = useNav ? el('nav', {class:'tab-foot', 'aria-label':'More tabs on this page'}) : null;
   const btns = list.map(t => { const b = el('button', {type:'button', role:'tab', 'aria-selected':'false', id:'tab-' + t.id}, t.label); b.addEventListener('click', () => sel(t.id, true)); bar.append(b); return b; });
+  function drawFoot(k){
+    foot.innerHTML = '';
+    const go = (j, cls, text) => { const a = el('button', {type:'button', class:'btn sm ' + cls}, text); a.addEventListener('click', () => { sel(list[j].id, true); bar.scrollIntoView({behavior:SDA.reduced ? 'auto' : 'smooth', block:'start'}); }); return a; };
+    const left = k > 0 ? go(k - 1, 'ghost', '← ' + list[k - 1].label) : el('span'), right = k < list.length - 1 ? go(k + 1, '', 'Next: ' + list[k + 1].label + ' →') : el('span');
+    foot.append(el('div', {class:'tab-foot-row'}, left, right));
+    const todo = list.map((t, j) => j).filter(j => j !== k && !seen.has(list[j].id));
+    if (todo.length){ const row = el('div', {class:'tab-foot-todo'}, el('span', {class:'muted'}, 'Not opened yet:')); todo.forEach(j => { const a = el('button', {type:'button', class:'chip'}, list[j].label); a.addEventListener('click', () => { sel(list[j].id, true); bar.scrollIntoView({behavior:SDA.reduced ? 'auto' : 'smooth', block:'start'}); }); row.append(a); }); foot.append(row); }
+  }
   bar.addEventListener('keydown', e => {
     const k = btns.indexOf(document.activeElement); if (k < 0) return;
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft'){ e.preventDefault(); const n = (k + (e.key === 'ArrowRight' ? 1 : -1) + btns.length) % btns.length; btns[n].focus(); sel(list[n].id, true); }
   });
   function sel(id, user){
     const k = Math.max(0, list.findIndex(t => t.id === id)); const cur = list[k];
-    btns.forEach((b, j) => { b.setAttribute('aria-selected', String(j === k)); b.tabIndex = j === k ? 0 : -1; });
+    seen.add(cur.id);
+    btns.forEach((b, j) => { b.setAttribute('aria-selected', String(j === k)); b.tabIndex = j === k ? 0 : -1; b.classList.toggle('seen', j !== k && seen.has(list[j].id)); });
+    if (foot) drawFoot(k);
     if (disp) disp(); panel.innerHTML = ''; panel.setAttribute('aria-labelledby', 'tab-' + cur.id);
     disp = withScope(() => { try { cur.render(panel); } catch(e){ console.error(e); panel.append(errCard('This tab failed to render', e)); } });
     revealScan(panel); $$('.prose', panel).forEach(p => glossify(p));
     if (opts.onSelect) opts.onSelect(cur.id, user);
   }
-  host.append(bar, panel); sel(opts.initial || list[0].id, false);
+  host.append(bar, panel); if (foot) host.append(foot); sel(opts.initial || list[0].id, false);
   return {select:sel};
 }
 
